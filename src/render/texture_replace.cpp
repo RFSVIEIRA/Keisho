@@ -284,7 +284,7 @@ std::string replacement_file_name(u64 hash, u32 colour_base, u32 luma_table, u32
 
 u32 TextureReplacements::mip_levels()
 {
-    return static_cast<u32>(std::bit_width(kReplacementLayerSize));
+    return bit_width_u32(kReplacementLayerSize);
 }
 
 void TextureReplacements::release_pixels()
@@ -414,7 +414,7 @@ usize TextureReplacements::load(const std::string& directory)
         entry.width       = image.width;
         entry.height      = image.height;
         entry.max_lod =
-            static_cast<u32>(std::bit_width(std::min(image.width, image.height))) - 1;
+            bit_width_u32(std::min(image.width, image.height)) - 1;
 
         std::vector<u8>& layer = m_layers.back();
         const s32 w = static_cast<s32>(image.width);

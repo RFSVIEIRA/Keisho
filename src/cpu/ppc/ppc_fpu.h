@@ -40,8 +40,8 @@ inline constexpr u64 kQuietBit = 0x0008000000000000ull;
     return is_nan(x) && (x & kQuietBit) == 0;
 }
 
-[[nodiscard]] inline double as_double(u64 x) { return std::bit_cast<double>(x); }
-[[nodiscard]] inline u64 as_bits(double x) { return std::bit_cast<u64>(x); }
+[[nodiscard]] inline double as_double(u64 x) { return u2d(x); }
+[[nodiscard]] inline u64 as_bits(double x) { return d2u(x); }
 
 /// lfs (PEM D.6): exact, and SNaNs stay signalling.
 [[nodiscard]] inline u64 single_to_double(u32 w)
@@ -49,7 +49,7 @@ inline constexpr u64 kQuietBit = 0x0008000000000000ull;
     if ((w & 0x7f800000u) == 0x7f800000u) {
         return (u64{w & 0x80000000u} << 32) | kExp | (u64{w & 0x007fffffu} << 29);
     }
-    return as_bits(static_cast<double>(std::bit_cast<float>(w)));
+    return as_bits(static_cast<double>(u2f(w)));
 }
 
 /// stfs (PEM D.7): truncating, tiny values denormalised.

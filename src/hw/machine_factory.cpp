@@ -17,12 +17,16 @@
 #include "hw/machine_factory.h"
 
 #include "core/log.h"
-#include "hw/model1.h"
+#if SM2_HAVE_MODEL1
+#  include "hw/model1.h"
+#endif
 #include "hw/model2.h"
 #include "hw/model2_original.h"
 #include "hw/model2b.h"
 #include "hw/model2c.h"
-#include "hw/model3/model3.h"
+#if SM2_HAVE_MODEL3
+#  include "hw/model3/model3.h"
+#endif
 
 namespace sm2::hw {
 
@@ -76,6 +80,7 @@ std::unique_ptr<Machine> create_machine(const rom::GameSpec& game, rom::RomSet r
         }
 
         case rom::Board::Model1: {
+#if SM2_HAVE_MODEL1
             if (!rom::board_implemented(game.board)) {
                 break;
             }
@@ -84,9 +89,13 @@ std::unique_ptr<Machine> create_machine(const rom::GameSpec& game, rom::RomSet r
                 return nullptr;
             }
             return machine;
+#else
+            break;
+#endif
         }
 
         case rom::Board::Model3: {
+#if SM2_HAVE_MODEL3
             if (!rom::board_implemented(game.board)) {
                 break;
             }
@@ -95,6 +104,9 @@ std::unique_ptr<Machine> create_machine(const rom::GameSpec& game, rom::RomSet r
                 return nullptr;
             }
             return machine;
+#else
+            break;
+#endif
         }
     }
 

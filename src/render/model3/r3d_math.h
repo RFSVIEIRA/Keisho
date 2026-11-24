@@ -51,8 +51,8 @@ inline void invert3(float v[3])
 
 // -- Real3D floats -------------------------------------------------------------
 
-[[nodiscard]] inline float u32_as_float(u32 v) { return std::bit_cast<float>(v); }
-[[nodiscard]] inline u32   float_as_u32(float v) { return std::bit_cast<u32>(v); }
+[[nodiscard]] inline float u32_as_float(u32 v) { return u2f(v); }
+[[nodiscard]] inline u32   float_as_u32(float v) { return f2u(v); }
 
 [[nodiscard]] u32 convert_pro_float(u32 a1);
 [[nodiscard]] inline u32 convert_16bit_pro_float(u32 a1) { return convert_pro_float(a1 << 15); }

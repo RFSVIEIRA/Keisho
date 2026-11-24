@@ -394,7 +394,11 @@ void CodeBuffer::flush_icache(const void* exec, usize size)
 void CodeBuffer::patch32(void* exec, u32 value)
 {
     u32* rw = reinterpret_cast<u32*>(to_rw(exec));
+#if defined(__cpp_lib_atomic_ref) && __cpp_lib_atomic_ref >= 201806L
     std::atomic_ref<u32>(*rw).store(value, std::memory_order_relaxed);
+#else
+    __atomic_store_n(rw, value, __ATOMIC_RELAXED);
+#endif
     flush_icache(exec, 4);
 }
 

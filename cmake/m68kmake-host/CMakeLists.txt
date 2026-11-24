@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.22)
 project(m68kmake_host C)
 
 # Musashi's opcode-table generator, built separately with the host toolchain
@@ -12,6 +12,8 @@ add_executable(m68kmake "${SM2_M68KMAKE_SRC}")
 set_target_properties(m68kmake PROPERTIES C_STANDARD 99)
 if(MSVC)
     target_compile_definitions(m68kmake PRIVATE _CRT_SECURE_NO_WARNINGS)
+    # MSVC /O2 miscompiles the 16-iteration bitpattern loop in m68kmake.c (drops bit 14).
+    target_compile_options(m68kmake PRIVATE /Od)
 else()
     target_compile_options(m68kmake PRIVATE -w)
 endif()

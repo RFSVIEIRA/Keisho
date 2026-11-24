@@ -81,7 +81,7 @@ std::optional<u64> decode_bitmask(u32 n, u32 immr, u32 imms, bool is64)
 
 std::optional<u32> encode_fp_imm8(double value)
 {
-    const u64 want = std::bit_cast<u64>(value);
+    const u64 want = d2u(value);
     for (u32 imm8 = 0; imm8 < 256; ++imm8) {
         const u64 sign = (imm8 >> 7) & 1;
         const u64 b    = (imm8 >> 6) & 1;
@@ -700,7 +700,7 @@ void Emitter::fmov(VReg d, double imm)
 void Emitter::fmov_const(VReg d, double value, Reg scratch)
 {
     const bool is_d = d.size == VSize::D;
-    const u64  bits = is_d ? std::bit_cast<u64>(value) : std::bit_cast<u32>(static_cast<float>(value));
+    const u64  bits = is_d ? d2u(value) : f2u(static_cast<float>(value));
     if (bits == 0) {
         fmov(d, is_d ? XZR : WZR);
         return;

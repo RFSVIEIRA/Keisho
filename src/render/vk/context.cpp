@@ -327,8 +327,10 @@ void Context::shutdown()
 
 bool Context::create_instance(const ContextConfig& config)
 {
+    const auto enumerate_version = reinterpret_cast<PFN_vkEnumerateInstanceVersion>(
+        vkGetInstanceProcAddr(VK_NULL_HANDLE, "vkEnumerateInstanceVersion"));
     u32 loader_version = VK_API_VERSION_1_0;
-    if (vkEnumerateInstanceVersion(&loader_version) != VK_SUCCESS) {
+    if (enumerate_version == nullptr || enumerate_version(&loader_version) != VK_SUCCESS) {
         loader_version = VK_API_VERSION_1_0;
     }
     if (loader_version < VK_API_VERSION_1_1) {
@@ -353,6 +355,7 @@ bool Context::create_instance(const ContextConfig& config)
     const std::vector<VkExtensionProperties> available = instance_extensions();
 
     VkInstanceCreateFlags create_flags = 0;
+#ifdef VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
     if (has_extension(available, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
         // Without this the loader hides portability-subset drivers such as
         // MoltenVK.
@@ -360,6 +363,7 @@ bool Context::create_instance(const ContextConfig& config)
         create_flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
         m_portability = true;
     }
+#endif
 
     bool want_validation = config.enable_validation;
     if (want_validation) {
@@ -516,13 +520,19 @@ bool Context::select_physical_device(const ContextConfig& config)
             }
         }
 
+        const auto get_features2 = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(
+            vkGetInstanceProcAddr(m_instance, "vkGetPhysicalDeviceFeatures2"));
+        if (get_features2 == nullptr) {
+            SM2_DEBUG("skipping '%s': vkGetPhysicalDeviceFeatures2 unavailable", properties.deviceName);
+            continue;
+        }
         VkPhysicalDeviceVulkan13Features features13{};
         features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
         ExtensionFeatures extension_features;
         VkPhysicalDeviceFeatures2 features2{};
         features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
         features2.pNext = core13 ? static_cast<void*>(&features13) : extension_features.chain(nullptr);
-        vkGetPhysicalDeviceFeatures2(candidate, &features2);
+        get_features2(candidate, &features2);
 
         const bool features_ok =
             core13 ? features13.dynamicRendering == VK_TRUE && features13.synchronization2 == VK_TRUE
@@ -935,6 +945,14 @@ bool Context::create_swapchain(VkSwapchainKHR old_swapchain)
     // No TRANSFER_SRC: frame capture reads PresentPass's native-resolution
     // image instead.
 
+    // Prefer an unrotated swapchain so UI layout, offscreen passes, and
+    // touch/pointer coordinates remain in the window's logical orientation;
+    // the hardware compositor handles panel rotation on scanout.
+    const VkSurfaceTransformFlagBitsKHR pre_transform =
+        (capabilities.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) != 0
+            ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
+            : capabilities.currentTransform;
+
     VkSwapchainCreateInfoKHR create_info{};
     create_info.sType            = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     create_info.surface          = m_surface;
@@ -944,7 +962,7 @@ bool Context::create_swapchain(VkSwapchainKHR old_swapchain)
     create_info.imageExtent      = extent;
     create_info.imageArrayLayers = 1;
     create_info.imageUsage       = usage;
-    create_info.preTransform     = capabilities.currentTransform;
+    create_info.preTransform     = pre_transform;
     create_info.compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     create_info.presentMode      = present_mode;
     create_info.clipped          = VK_TRUE;
@@ -1002,9 +1020,12 @@ bool Context::create_swapchain(VkSwapchainKHR old_swapchain)
                           : present_mode == VK_PRESENT_MODE_MAILBOX_KHR   ? "MAILBOX"
                           : present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR ? "IMMEDIATE"
                                                                           : "other";
-    SM2_INFO("swapchain %ux%u, %u images, present mode %s",
-             extent.width, extent.height, actual_count, mode_name);
+    SM2_INFO("swapchain %ux%u, %u images, present mode %s, transform 0x%x (surface 0x%x)",
+             extent.width, extent.height, actual_count, mode_name,
+             static_cast<u32>(pre_transform),
+             static_cast<u32>(capabilities.currentTransform));
 
+    m_suboptimal_from_transform = (pre_transform != capabilities.currentTransform);
     m_needs_recreation = false;
     return true;
 }
@@ -1096,9 +1117,11 @@ bool Context::begin_frame()
         SM2_ERROR("vkAcquireNextImageKHR failed: %s", result_string(acquire));
         return false;
     }
-    if (acquire == VK_SUBOPTIMAL_KHR) {
+    if (acquire == VK_SUBOPTIMAL_KHR && !m_suboptimal_from_transform) {
         // Present anyway this frame, then rebuild. Bailing out here would drop
-        // a frame for a condition that is merely inefficient.
+        // a frame for a condition that is merely inefficient. When preTransform
+        // intentionally stays IDENTITY on a rotated surface, SUBOPTIMAL fires
+        // every frame; genuine resizes still trip OUT_OF_DATE or drawable_size().
         m_needs_recreation = true;
     }
 
@@ -1187,11 +1210,12 @@ bool Context::end_frame()
     // fence belongs to this slot.
     m_frame_index = (m_frame_index + 1) % kFramesInFlight;
 
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+    if (result == VK_ERROR_OUT_OF_DATE_KHR
+        || (result == VK_SUBOPTIMAL_KHR && !m_suboptimal_from_transform)) {
         m_needs_recreation = true;
         return true;
     }
-    if (result != VK_SUCCESS) {
+    if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
         SM2_ERROR("vkQueuePresentKHR failed: %s", result_string(result));
         return false;
     }
@@ -1271,10 +1295,12 @@ std::vector<std::string> Context::enumerate_device_names()
 
     std::vector<const char*> extensions;
     VkInstanceCreateFlags    flags = 0;
+#ifdef VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
     if (has_extension(instance_extensions(), VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
         extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
         flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
     }
+#endif
 
     VkInstanceCreateInfo create_info{};
     create_info.sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;

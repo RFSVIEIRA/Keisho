@@ -193,10 +193,11 @@ private:
 
     u32  m_frame_index      = 0;
     u32  m_image_index      = 0;
-    bool m_frame_active     = false;
-    bool m_vsync            = true;
-    bool m_needs_recreation = false;
-    bool m_portability       = false;
+    bool m_frame_active              = false;
+    bool m_vsync                     = true;
+    bool m_needs_recreation          = false;
+    bool m_suboptimal_from_transform = false;
+    bool m_portability               = false;
 
     // -- GPU stage timing ----------------------------------------------------
     // Two queries per stage (begin, end), one set per frame in flight. A zero

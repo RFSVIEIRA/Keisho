@@ -321,7 +321,30 @@ void GlBackend::draw_overlay(bool active)
     if (!active) {
         return;
     }
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    ImDrawData* data = ImGui::GetDrawData();
+#if defined(__ANDROID__)
+    static bool s_logged = false;
+    while (GetError() != GL_NO_ERROR) {}
+    ImGui_ImplOpenGL3_RenderDrawData(data);
+    if (!s_logged && data != nullptr) {
+        s_logged = true;
+        const GLenum err = GetError();
+        ImTextureID tex0 = 0;
+        int tex_w = 0, tex_h = 0;
+        if (data->Textures != nullptr && !data->Textures->empty()) {
+            const ImTextureData* td = (*data->Textures)[0];
+            tex0  = td->TexID;
+            tex_w = td->Width;
+            tex_h = td->Height;
+        }
+        SM2_INFO("gl: overlay first draw size=%.0fx%.0f lists=%d vtx=%d tex=%llu (%dx%d) glErr=0x%x",
+                 static_cast<double>(data->DisplaySize.x), static_cast<double>(data->DisplaySize.y),
+                 data->CmdListsCount, data->TotalVtxCount,
+                 static_cast<unsigned long long>(tex0), tex_w, tex_h, err);
+    }
+#else
+    ImGui_ImplOpenGL3_RenderDrawData(data);
+#endif
 }
 
 bool GlBackend::end_frame()

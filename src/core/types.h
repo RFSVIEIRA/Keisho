@@ -19,6 +19,8 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <type_traits>
 
 // Project-wide fixed-width integer names, kept short because they appear on
 // nearly every line of the hardware layer.
@@ -64,30 +66,55 @@ template <typename T>
     return static_cast<s32>((raw ^ mask) - mask);
 }
 
+/// Width in bits needed to represent `value` (0 -> 0).
+[[nodiscard]] constexpr u32 bit_width_u32(u32 value) noexcept
+{
+#if defined(__cpp_lib_int_pow2) && __cpp_lib_int_pow2 >= 202002L
+    return static_cast<u32>(std::bit_width(value));
+#else
+    return value == 0u ? 0u : 32u - static_cast<u32>(std::countl_zero(value));
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // Float / integer reinterpretation
 // ---------------------------------------------------------------------------
 // Model 2 sends floats over a 24-bit bus by dropping the low 8 mantissa bits,
 // so geometry code often works on the bit pattern. These mirror MAME's f2u/u2f.
 
+template <typename To, typename From>
+[[nodiscard]] constexpr To bit_cast_compat(const From& value) noexcept
+{
+    static_assert(sizeof(To) == sizeof(From));
+#if defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
+    return std::bit_cast<To>(value);
+#elif defined(__clang__) || defined(__GNUC__)
+    return __builtin_bit_cast(To, value);
+#else
+    To out;
+    std::memcpy(&out, &value, sizeof(To));
+    return out;
+#endif
+}
+
 [[nodiscard]] constexpr u32 f2u(float value) noexcept
 {
-    return std::bit_cast<u32>(value);
+    return bit_cast_compat<u32>(value);
 }
 
 [[nodiscard]] constexpr float u2f(u32 value) noexcept
 {
-    return std::bit_cast<float>(value);
+    return bit_cast_compat<float>(value);
 }
 
 [[nodiscard]] constexpr u64 d2u(double value) noexcept
 {
-    return std::bit_cast<u64>(value);
+    return bit_cast_compat<u64>(value);
 }
 
 [[nodiscard]] constexpr double u2d(u64 value) noexcept
 {
-    return std::bit_cast<double>(value);
+    return bit_cast_compat<double>(value);
 }
 
 // ---------------------------------------------------------------------------

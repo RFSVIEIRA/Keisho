@@ -29,7 +29,8 @@
 namespace sm2 {
 namespace {
 
-constexpr const char* kFileName = "keisho.ini";
+constexpr const char* kFileName        = "keisho.ini";
+constexpr const char* kFiltersFileName = "filters.ini";
 #if defined(_WIN32) || defined(__APPLE__)
 constexpr const char* kDirName = "Keisho";
 #else
@@ -208,6 +209,12 @@ constexpr std::array<const char*, Config::kPadRoleCount> kPadRoleNames = {
 };
 
 constexpr std::array<const char*, 3> kLightgunModeNames = {"auto", "on", "off"};
+constexpr std::array<const char*, 3> kVirtualPadModeNames = {"auto", "on", "off"};
+constexpr std::array<const char*, 2> kTouchGunAimNames = {"direct", "stick"};
+
+std::string g_android_config_dir;
+std::string g_android_data_dir;
+std::string g_android_assets_dir;
 
 /// Shortcut names in the ini, after "key_", in Config::Hotkey order.
 constexpr std::array<const char*, Config::kHotkeyCount> kHotkeyNames = {
@@ -252,6 +259,11 @@ constexpr std::array<const char*, Config::kPadAxisCount> kPadAxisNames = {
 /// is the XDG *data* directory; config belongs in the config directory.
 [[nodiscard]] std::filesystem::path config_directory()
 {
+#if defined(__ANDROID__)
+    if (!g_android_config_dir.empty()) {
+        return std::filesystem::path(g_android_config_dir);
+    }
+#endif
 #if defined(_WIN32)
     if (const char* appdata = environment("APPDATA")) {
         return app_directory(appdata);
@@ -314,6 +326,11 @@ std::string default_config_path()
 
 std::string data_directory(bool config_in_cwd)
 {
+#if defined(__ANDROID__)
+    if (!g_android_data_dir.empty()) {
+        return g_android_data_dir;
+    }
+#endif
     // A dev checkout keeps its data local so the tree stays self-contained.
     if (config_in_cwd) {
         return ".";
@@ -359,8 +376,25 @@ void resolve_default_paths(Config* config, bool config_in_cwd,
             config_dir.empty() ? std::filesystem::path(".") : std::filesystem::path(config_dir);
         config->artwork_dir = (dir / "artwork").string();
     }
-    // model2_rom_dir intentionally left empty: no sensible default.
+#if defined(__ANDROID__)
+    if (config->model2_rom_dir.empty()) {
+        config->model2_rom_dir = (base / "roms").string();
+    }
+#endif
+    // model2_rom_dir intentionally left empty on desktop: no sensible default.
 }
+
+void set_android_directories(std::string config_dir, std::string data_dir,
+                             std::string assets_dir)
+{
+    g_android_config_dir = std::move(config_dir);
+    g_android_data_dir   = std::move(data_dir);
+    g_android_assets_dir = std::move(assets_dir);
+}
+
+const std::string& android_config_directory() { return g_android_config_dir; }
+const std::string& android_data_directory()   { return g_android_data_dir; }
+const std::string& android_assets_directory() { return g_android_assets_dir; }
 
 namespace {
 
@@ -441,6 +475,72 @@ void write_pad_layout(std::ostream& out, const Config::PadLayout& layout)
     }
 }
 
+/// Parses virtual-gamepad and lightgun touch/stick sensitivity settings.
+[[nodiscard]] bool parse_touch_config_key(const std::string& key, const std::string& value,
+                                          Config* out, bool* bad)
+{
+    if (key == "virtual_gamepad") {
+        if (!parse_virtual_gamepad_mode(value, &out->virtual_gamepad)) *bad = true;
+        return true;
+    }
+    if (key == "virtual_gamepad_opacity") {
+        if (!parse_u32(value, &out->virtual_gamepad_opacity)) *bad = true;
+        return true;
+    }
+    if (key == "virtual_gamepad_scale") {
+        if (!parse_u32(value, &out->virtual_gamepad_scale)) *bad = true;
+        return true;
+    }
+    if (key == "touch_gun_aim") {
+        const std::string v = lowered(value);
+        if (v == "direct" || v == "touch") {
+            out->touch_gun_aim = Config::TouchGunAim::Direct;
+        } else if (v == "stick" || v == "gamepad" || v == "pad") {
+            out->touch_gun_aim = Config::TouchGunAim::Stick;
+        } else {
+            *bad = true;
+        }
+        return true;
+    }
+    if (key == "lightgun_stick_sensitivity") {
+        if (!parse_u32(value, &out->lightgun_stick_sensitivity)) *bad = true;
+        return true;
+    }
+    return false;
+}
+
+/// Maps [paths] INI keys to string members on Config via a single table.
+[[nodiscard]] bool parse_path_config_key(const std::string& key, const std::string& value, Config* out)
+{
+    struct PathEntry {
+        const char*          name;
+        std::string Config::*member;
+    };
+    static constexpr std::array<PathEntry, 14> kPathEntries = {{
+        {"model1_rom_dir",     &Config::model1_rom_dir},
+        {"model2_rom_dir",     &Config::model2_rom_dir},
+        {"rom_dir",            &Config::model2_rom_dir},
+        {"model3_rom_dir",     &Config::model3_rom_dir},
+        {"model1_artwork_dir", &Config::model1_artwork_dir},
+        {"model2_artwork_dir", &Config::model2_artwork_dir},
+        {"model3_artwork_dir", &Config::model3_artwork_dir},
+        {"model1_bezel_dir",   &Config::model1_bezel_dir},
+        {"model2_bezel_dir",   &Config::model2_bezel_dir},
+        {"model3_bezel_dir",   &Config::model3_bezel_dir},
+        {"nvram_dir",          &Config::nvram_dir},
+        {"screenshot_dir",     &Config::screenshot_dir},
+        {"bezel_dir",          &Config::bezel_dir},
+        {"crosshair_dir",      &Config::crosshair_dir},
+    }};
+    for (const PathEntry& e : kPathEntries) {
+        if (key == e.name) {
+            out->*(e.member) = value;
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 bool load_config(const std::string& path, Config* out, std::vector<std::string>* problems)
@@ -517,6 +617,16 @@ bool load_config(const std::string& path, Config* out, std::vector<std::string>*
                 problems->push_back(path + ":" + std::to_string(number)
                                     + ": unknown setting '" + key + "'");
             }
+            continue;
+        }
+        {
+            bool bad = false;
+            if (parse_touch_config_key(key, value, out, &bad)) {
+                if (bad) bad_value();
+                continue;
+            }
+        }
+        if (parse_path_config_key(key, value, out)) {
             continue;
         }
         if (key == "vsync") {
@@ -987,20 +1097,6 @@ bool load_config(const std::string& path, Config* out, std::vector<std::string>*
             } else {
                 bad_value();
             }
-        } else if (key == "model1_rom_dir") {
-            out->model1_rom_dir = value;
-        } else if (key == "model2_rom_dir" || key == "rom_dir") {  // rom_dir: the older spelling
-            out->model2_rom_dir = value;
-        } else if (key == "model3_rom_dir") {
-            out->model3_rom_dir = value;
-        } else if (key == "nvram_dir") {
-            out->nvram_dir = value;
-        } else if (key == "screenshot_dir") {
-            out->screenshot_dir = value;
-        } else if (key == "bezel_dir") {
-            out->bezel_dir = value;
-        } else if (key == "crosshair_dir") {
-            out->crosshair_dir = value;
         } else if (key == "scrape_artwork") {
             if (!parse_bool(value, &out->scrape_artwork)) {
                 bad_value();
@@ -1044,7 +1140,10 @@ bool load_config(const std::string& path, Config* out, std::vector<std::string>*
     out->wheel_rumble_strength = std::min(out->wheel_rumble_strength, 100u);
     out->pad_rumble_strength = std::min(out->pad_rumble_strength, 100u);
     out->pad_stick_sensitivity = std::clamp(out->pad_stick_sensitivity, 25u, 300u);
+    out->lightgun_stick_sensitivity = std::clamp(out->lightgun_stick_sensitivity, 25u, 300u);
     out->pad_stick_deadzone    = std::min(out->pad_stick_deadzone, 40u);
+    out->virtual_gamepad_opacity = std::clamp(out->virtual_gamepad_opacity, 15u, 100u);
+    out->virtual_gamepad_scale   = std::clamp(out->virtual_gamepad_scale, 60u, 150u);
     out->wheel_steer_deadzone  = std::min(out->wheel_steer_deadzone, 20u);
     if (out->outputs_network_port == 0 || out->outputs_network_port > 65535) {
         out->outputs_network_port = 8000;
@@ -1128,6 +1227,12 @@ bool save_config(const std::string& path, const Config& config)
         << "model1_rom_dir = " << config.model1_rom_dir << "\n"
         << "model2_rom_dir = " << config.model2_rom_dir << "\n"
         << "model3_rom_dir = " << config.model3_rom_dir << "\n"
+        << "model1_artwork_dir = " << config.model1_artwork_dir << "\n"
+        << "model2_artwork_dir = " << config.model2_artwork_dir << "\n"
+        << "model3_artwork_dir = " << config.model3_artwork_dir << "\n"
+        << "model1_bezel_dir = " << config.model1_bezel_dir << "\n"
+        << "model2_bezel_dir = " << config.model2_bezel_dir << "\n"
+        << "model3_bezel_dir = " << config.model3_bezel_dir << "\n"
         << "nvram_dir = " << config.nvram_dir << "\n"
         << "screenshot_dir = " << config.screenshot_dir << "\n"
         << "bezel_dir = " << config.bezel_dir << "\n"
@@ -1177,6 +1282,7 @@ bool save_config(const std::string& path, const Config& config)
         << "lightgun_crosshair = " << bool_text(config.lightgun_crosshair) << "\n"
         << "lightgun_hide_flash = " << bool_text(config.lightgun_hide_flash) << "\n"
         << "lightgun_pad_centred = " << bool_text(config.lightgun_pad_centred) << "\n"
+        << "lightgun_stick_sensitivity = " << config.lightgun_stick_sensitivity << "\n"
         << "lightgun_recoil = " << bool_text(config.lightgun_recoil) << "\n"
         << "lightgun_recoil_strength = " << config.lightgun_recoil_strength << "\n"
         << "sinden_border = " << bool_text(config.sinden_border) << "\n"
@@ -1226,6 +1332,10 @@ bool save_config(const std::string& path, const Config& config)
         << "pad_stick_sensitivity = " << config.pad_stick_sensitivity << "\n"
         << "pad_stick_deadzone = " << config.pad_stick_deadzone << "\n"
         << "pad_shortcuts = " << bool_text(config.pad_shortcuts) << "\n"
+        << "virtual_gamepad = " << kVirtualPadModeNames[static_cast<usize>(config.virtual_gamepad)] << "\n"
+        << "virtual_gamepad_opacity = " << config.virtual_gamepad_opacity << "\n"
+        << "virtual_gamepad_scale = " << config.virtual_gamepad_scale << "\n"
+        << "touch_gun_aim = " << kTouchGunAimNames[static_cast<usize>(config.touch_gun_aim)] << "\n"
         << "pad1_device = " << config.pad_device[0] << "\n"
         << "pad2_device = " << config.pad_device[1] << "\n";
     write_pad_layout(out, config.pad);
@@ -1235,6 +1345,221 @@ bool save_config(const std::string& path, const Config& config)
     }
 
     return out.good();
+}
+
+namespace {
+
+[[nodiscard]] std::string normalize_stem(std::string_view raw)
+{
+    std::string item = lowered(trim(raw));
+    if (item.size() > 4 && item.compare(item.size() - 4, 4, ".zip") == 0) {
+        item.resize(item.size() - 4);
+    } else if (item.size() > 3 && item.compare(item.size() - 3, 3, ".7z") == 0) {
+        item.resize(item.size() - 3);
+    }
+    return trim(item);
+}
+
+[[nodiscard]] std::string normalize_filter_section(std::string_view raw)
+{
+    std::string out;
+    for (unsigned char c : raw) {
+        if (std::isalnum(c)) {
+            out.push_back(static_cast<char>(std::tolower(c)));
+        }
+    }
+    return out;
+}
+
+void add_filter_tokens(std::string_view text, std::unordered_set<std::string>* target)
+{
+    size_t start = 0;
+    while (start < text.size()) {
+        const size_t comma = text.find(',', start);
+        const size_t end   = comma == std::string_view::npos ? text.size() : comma;
+        const std::string stem = normalize_stem(text.substr(start, end - start));
+        if (!stem.empty()) {
+            target->insert(stem);
+        }
+        start = end + 1;
+    }
+}
+
+#if defined(__ANDROID__)
+void write_default_filters(const std::string& path)
+{
+    const std::filesystem::path file(path);
+    if (file.has_parent_path()) {
+        std::error_code error;
+        std::filesystem::create_directories(file.parent_path(), error);
+    }
+    std::ofstream out(path, std::ios::trunc);
+    if (!out) {
+        return;
+    }
+    out << "# Keisho — Listas editáveis de Includes e Excludes (Model 1, Model 2 e Model 3)\n"
+        << "# Editable ROM lists per system (one ROM stem per line, e.g. srally2).\n"
+        << "#\n"
+        << "# Regras / Rules:\n"
+        << "# - Includes: vazio = mostra todos os jogos do modelo encontrados na pasta.\n"
+        << "#             Se listar nomes aqui, apenas esses nomes serão mostrados.\n"
+        << "# - Excludes: nomes listados aqui ficam ocultos na lista de jogos.\n"
+        << "#   (Pode apagar linhas ou comentá-las com # ou ; para voltar a mostrar.)\n"
+        << "\n"
+        << "[Model 1 Includes]\n"
+        << "; Exemplo: vr\n"
+        << "\n"
+        << "[Model 1 Excludes]\n"
+        << "netmerc\n"
+        << "swaj\n"
+        << "wingwaru\n"
+        << "wingwarj\n"
+        << "wingwar360\n"
+        << "\n"
+        << "[Model 2 Includes]\n"
+        << "; Exemplo: daytona\n"
+        << "\n"
+        << "[Model 2 Excludes]\n"
+        << "; Firmware I/O, clones regionais extras e protótipos não jogáveis\n"
+        << "model1io\n"
+        << "model1io2\n"
+        << "sfight\n"
+        << "daytona93\n"
+        << "daytonas\n"
+        << "daytonase\n"
+        << "daytonam\n"
+        << "daytonat\n"
+        << "daytonata\n"
+        << "daytonagtx\n"
+        << "powsled\n"
+        << "powsledm\n"
+        << "powsledr\n"
+        << "vcopa\n"
+        << "\n"
+        << "[Model 3 Includes]\n"
+        << "; Exemplo: srally2\n"
+        << "\n"
+        << "[Model 3 Excludes]\n"
+        << "; Clones regionais e protótipos não funcionais (editável livremente)\n"
+        << "dirtdvlsau\n"
+        << "dirtdvlsg\n"
+        << "dirtdvlsj\n"
+        << "dirtdvlsu\n"
+        << "eca\n"
+        << "ecaj\n"
+        << "ecap\n"
+        << "fvipers2o\n"
+        << "getbass\n"
+        << "getbassdx\n"
+        << "getbassur\n"
+        << "harleya\n"
+        << "lostwsgp\n"
+        << "mgtrkbad\n"
+        << "scudau\n"
+        << "scuddx\n"
+        << "scudplus\n"
+        << "scudplusa\n"
+        << "srally2dx\n"
+        << "srally2p\n"
+        << "srally2pa\n"
+        << "swtrilgya\n"
+        << "swtrilgyp\n"
+        << "vf3a\n"
+        << "vf3c\n"
+        << "vf3tb\n"
+        << "von254g\n"
+        << "von2a\n"
+        << "von2o\n"
+        << "vs215\n"
+        << "vs215o\n"
+        << "vs29815\n"
+        << "vs299\n"
+        << "vs29915\n"
+        << "vs29915a\n"
+        << "vs29915j\n"
+        << "vs299a\n"
+        << "vs299j\n";
+}
+#endif
+
+}  // namespace
+
+std::string filters_file_in(const std::string& directory)
+{
+    return (std::filesystem::path(directory) / kFiltersFileName).string();
+}
+
+bool parse_virtual_gamepad_mode(const std::string& value, Config::VirtualGamepadMode* out)
+{
+    const std::string v = lowered(trim(value));
+    for (u32 m = 0; m < kVirtualPadModeNames.size(); ++m) {
+        if (v == kVirtualPadModeNames[m]) {
+            *out = static_cast<Config::VirtualGamepadMode>(m);
+            return true;
+        }
+    }
+    bool flag = false;
+    if (parse_bool(v, &flag)) {
+        *out = flag ? Config::VirtualGamepadMode::On : Config::VirtualGamepadMode::Off;
+        return true;
+    }
+    return false;
+}
+
+bool load_or_create_filters(const std::string& path, ModelFilters* out)
+{
+    *out = ModelFilters{};
+#if defined(__ANDROID__)
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) {
+        write_default_filters(path);
+    }
+#endif
+    std::ifstream in(path);
+    if (!in) {
+        return false;
+    }
+
+    std::unordered_set<std::string>* target = nullptr;
+    std::string line;
+    while (std::getline(in, line)) {
+        const std::string trimmed = trim(line);
+        if (trimmed.empty() || trimmed[0] == '#' || trimmed[0] == ';') {
+            continue;
+        }
+        if (trimmed[0] == '[') {
+            const usize close = trimmed.find(']');
+            const std::string sec = normalize_filter_section(
+                trimmed.substr(1, close == std::string::npos ? std::string::npos : close - 1));
+            if (sec == "model1includes" || sec == "model1include" || sec == "m1include") {
+                target = &out->model1_include;
+            } else if (sec == "model1excludes" || sec == "model1exclude" || sec == "m1exclude") {
+                target = &out->model1_exclude;
+            } else if (sec == "model2includes" || sec == "model2include" || sec == "m2include") {
+                target = &out->model2_include;
+            } else if (sec == "model2excludes" || sec == "model2exclude" || sec == "m2exclude") {
+                target = &out->model2_exclude;
+            } else if (sec == "model3includes" || sec == "model3include" || sec == "m3include") {
+                target = &out->model3_include;
+            } else if (sec == "model3excludes" || sec == "model3exclude" || sec == "m3exclude") {
+                target = &out->model3_exclude;
+            } else {
+                target = nullptr;
+            }
+            continue;
+        }
+        if (target == nullptr) {
+            continue;
+        }
+        // Strip inline comments (# or ;) if present.
+        const size_t comment = trimmed.find_first_of("#;");
+        std::string_view payload(trimmed.data(), comment == std::string::npos ? trimmed.size() : comment);
+        if (const size_t eq = payload.find('='); eq != std::string_view::npos) {
+            payload = payload.substr(eq + 1);
+        }
+        add_filter_tokens(payload, target);
+    }
+    return true;
 }
 
 }  // namespace sm2

@@ -95,8 +95,8 @@ u32 Ppc::interpret(IrBlock& b, u32 max_insns)
 
     const RoundingScope rounding(b.key & kKeyRnMask);
 
-    auto f  = [&st](u32 n) { return std::bit_cast<double>(st.fpr[n]); };
-    auto sf = [&st](u32 n, double v) { st.fpr[n] = std::bit_cast<u64>(v); };
+    auto f  = [&st](u32 n) { return u2d(st.fpr[n]); };
+    auto sf = [&st](u32 n, double v) { st.fpr[n] = d2u(v); };
 
     auto break_after = [&](u32 i) {
         stop_insn = b.op_insn[i] + 1u;

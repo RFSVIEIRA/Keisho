@@ -12,7 +12,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
-#include <numbers>
+#if __has_include(<numbers>)
+#  include <numbers>
+#endif
 
 namespace sm2::hw {
 
@@ -23,9 +25,14 @@ mpeg_audio::mpeg_audio(const void *base, unsigned int accepted, bool lsb_first, 
 	do_gb = lsb_first ? do_gb_lsb : do_gb_msb;
 	m_position_align = position_align ? position_align - 1 : 0;
 
+#if defined(__cpp_lib_math_constants) && __cpp_lib_math_constants >= 201907L
+	constexpr double kPi = std::numbers::pi;
+#else
+	constexpr double kPi = 3.14159265358979323846;
+#endif
 	for (int i = 0; i < 32; i++) {
 		for (int j = 0; j < 32; j++)
-			m_cos_cache[i][j] = cos(i*(2 * j + 1) * std::numbers::pi / 64);
+			m_cos_cache[i][j] = cos(i*(2 * j + 1) * kPi / 64);
 	}
 
 	clear();

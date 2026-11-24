@@ -40,8 +40,16 @@ bool board_implemented(Board board)
         case Board::Model2A: return true;
         case Board::Model2B: return true;
         case Board::Model2C: return true;
+#if SM2_HAVE_MODEL1
         case Board::Model1:  return true;
+#else
+        case Board::Model1:  return false;
+#endif
+#if SM2_HAVE_MODEL3
         case Board::Model3:  return true;
+#else
+        case Board::Model3:  return false;
+#endif
     }
     return false;
 }

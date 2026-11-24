@@ -195,8 +195,8 @@ struct PpcState {
     // ---- accessors -----------------------------------------------------------
     [[nodiscard]] u32& r(unsigned n) { return slot[n]; }
     [[nodiscard]] u32 r(unsigned n) const { return slot[n]; }
-    [[nodiscard]] double f(unsigned n) const { return std::bit_cast<double>(fpr[n]); }
-    void set_f(unsigned n, double v) { fpr[n] = std::bit_cast<u64>(v); }
+    [[nodiscard]] double f(unsigned n) const { return u2d(fpr[n]); }
+    void set_f(unsigned n, double v) { fpr[n] = d2u(v); }
 
     /// The architectural 32-bit CR and XER.
     [[nodiscard]] u32 get_cr() const

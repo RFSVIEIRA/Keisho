@@ -1534,10 +1534,70 @@ void Model2C::set_nvram_directory(const std::string& directory)
     m_nvram_directory = directory;
 }
 
+namespace {
+
+/// Populate Behind Enemy Lines' 93C46 EEPROM with full-range gun calibration
+/// (MIN=00, DEL=FF) when missing or still uncalibrated (0xFF), so the sight
+/// tracks the full screen range instead of locking at the bottom-left corner.
+void ensure_bel_gun_calibration(Eeprom93c46& eeprom, const rom::GameSpec& game)
+{
+    if (game.name != "bel" && game.parent != "bel") {
+        return;
+    }
+    auto bytes = eeprom.bytes();
+    if (bytes.size() < 128) {
+        return;
+    }
+
+    const bool has_sig = bytes[4] == 'L' && bytes[5] == 'M' && bytes[6] == 'C' && bytes[7] == '!';
+    if (!has_sig) {
+        static constexpr std::array<u8, 40> kBelDefaultHeader = {
+            0x00, 0x00, 0x01, 0x00, 'L',  'M',  'C',  '!',
+            0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x00, 0x01,
+            0x01, 0xff, 0xff, 0x01, 0x01, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x00, 0x00,
+        };
+        std::fill_n(bytes.begin(), 64, u8{0xff});
+        std::copy(kBelDefaultHeader.begin(), kBelDefaultHeader.end(), bytes.begin());
+    } else {
+        bool all_uncalibrated = true;
+        for (usize i = 0x17; i <= 0x1e; ++i) {
+            if (bytes[i] != 0xff) {
+                all_uncalibrated = false;
+                break;
+            }
+        }
+        if (!all_uncalibrated) {
+            return;
+        }
+        bytes[0x17] = 0x00;
+        bytes[0x18] = 0x00;
+        bytes[0x19] = 0x00;
+        bytes[0x1a] = 0x00;
+        bytes[0x1b] = 0xff;
+        bytes[0x1c] = 0xff;
+        bytes[0x1d] = 0xff;
+        bytes[0x1e] = 0xff;
+    }
+
+    u16 sum = 0;
+    for (usize i = 0x02; i < 0x28; i += 2) {
+        sum = static_cast<u16>(
+            sum + (static_cast<u16>(bytes[i]) | (static_cast<u16>(bytes[i + 1]) << 8)));
+    }
+    bytes[0] = static_cast<u8>(sum & 0xff);
+    bytes[1] = static_cast<u8>((sum >> 8) & 0xff);
+    std::copy_n(bytes.begin(), 64, bytes.begin() + 64);
+}
+
+}  // namespace
+
 void Model2C::seed_eeprom_from_rom()
 {
     // ROM_REGION16_LE: a straight copy on a little-endian host.
     (void)apply_default_image(m_roms.region("eeprom"), m_eeprom.bytes());
+    ensure_bel_gun_calibration(m_eeprom, m_game);
 }
 
 void Model2C::load_nvram()
@@ -1564,6 +1624,7 @@ void Model2C::load_nvram()
     }
 
     (void)m_eeprom.load((base / (m_game.name + ".eeprom")).string());
+    ensure_bel_gun_calibration(m_eeprom, m_game);
 }
 
 void Model2C::save_nvram() const

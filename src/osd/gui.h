@@ -153,7 +153,14 @@ public:
     void set_current_family(std::string key) { m_current_family = std::move(key); }
 
     void set_current_game(std::string name) { m_current_game = std::move(name); }
+    void set_current_system(std::string system) { m_current_system = std::move(system); }
     void set_model3_running(bool running) { m_model3_running = running; }
+    void set_picker_can_return(bool can_return) { m_picker_can_return = can_return; }
+    [[nodiscard]] bool take_return_to_picker_request();
+    [[nodiscard]] bool take_rescan_request();
+    [[nodiscard]] bool take_quit_request();
+    [[nodiscard]] const GameFamily* current_family_info() const;
+    [[nodiscard]] float ui_scale() const { return m_ui_scale > 0.0f ? m_ui_scale : 1.0f; }
 
     [[nodiscard]] render::PictureArea picture_area() const { return m_present_area; }
 
@@ -255,6 +262,9 @@ public:
             float                          w      = 0.0f;
             float                          h      = 0.0f;
         };
+        /// Local cover images matching the ROM archive stem in the system's artwork folder.
+        std::vector<std::string> local_art_paths;
+
         /// Artwork in display order; the highlighted game cycles through it.
         std::vector<Art1> art;
         enum class Art { Unknown, Loaded, None } art_state = Art::Unknown;
@@ -316,7 +326,22 @@ private:
     void draw_calibration_markers(const class Input* input);
     void draw_sinden_border(const Config& config);
 
-    enum class DirPickerTarget { None, Model1RomDir, Model2RomDir, Model3RomDir, NvramDir, ScreenshotDir, BezelDir, CrosshairDir };
+    enum class DirPickerTarget {
+        None,
+        Model1RomDir,
+        Model2RomDir,
+        Model3RomDir,
+        Model1ArtworkDir,
+        Model2ArtworkDir,
+        Model3ArtworkDir,
+        Model1BezelDir,
+        Model2BezelDir,
+        Model3BezelDir,
+        NvramDir,
+        ScreenshotDir,
+        BezelDir,
+        CrosshairDir,
+    };
 
     void open_dir_picker(DirPickerTarget target, const std::string& initial);
 
@@ -327,6 +352,7 @@ private:
     std::function<Config(const Config&)> m_save_filter;
     std::string m_config_path;  ///< where Save writes; empty -> default path.
     std::vector<std::string> m_available_renderers;  ///< for the Settings dropdown
+    std::string              m_active_renderer;      ///< active running backend label ("OpenGL"/"Vulkan"/"Software")
     bool        m_visible     = false;
     bool        m_initialised = false;
     float       m_ui_scale    = 0.0f;  ///< applied overlay scale; 0 forces first-frame apply.
@@ -433,13 +459,36 @@ private:
     };
     std::optional<LoadErrorDialog> m_load_error;
     void draw_load_error();
+#if defined(__ANDROID__)
+    void touch_drag_scroll(bool horizontal = false);
+    void draw_mobile_topbar(const ui::Palette& p, ui::Kit& kit, const Config& config,
+                            ImVec2 at, float width, bool in_picker, float* out_height);
+    void draw_mobile_bottombar(const ui::Palette& p, ui::Kit& kit, Config& config,
+                               ImVec2 at, float width, bool in_picker, float* out_top);
+    void draw_saves_modal(const ui::Palette& p, Config& config);
+    void draw_rom_folders_modal(const ui::Palette& p, Config& config);
+#endif
 
     // -- directory picker state (Paths tab "Browse..." buttons) -------------
     // Self-drawn (std::filesystem only), avoiding a native-dialog dependency.
+    struct DirEntry {
+        std::string name;
+        bool        is_dir = true;
+    };
     DirPickerTarget           m_dir_picker_target     = DirPickerTarget::None;
     std::string               m_dir_picker_path;       ///< editable path field
-    std::vector<std::string>  m_dir_picker_subdirs;    ///< immediate children of the path above
+    std::vector<DirEntry>     m_dir_picker_entries;    ///< immediate subdirectories & .zip/.7z files
     bool                      m_dir_picker_unreadable  = false;
+    bool                      m_rescan_requested       = false;
+    bool                      m_quit_requested         = false;
+#if defined(__ANDROID__)
+    bool                      m_saves_modal_open       = false;
+    bool                      m_rom_folders_modal_open = false;
+    bool                      m_picker_find_open       = false;
+    unsigned int              m_touch_scroll_window    = 0;
+    bool                      m_touch_scrolling        = false;
+    float                     m_touch_scroll_vel       = 0.0f;
+#endif
 
     /// BeginTabItem() overrides the ID stack, so OpenPopup() must be issued
     /// from draw_dir_picker_popup() (after EndTabBar()) instead of here.
@@ -472,6 +521,7 @@ private:
     Bezel       m_bezel;
     std::string m_bezel_lookup;
     std::string m_current_game;
+    std::string m_current_system;
     bool        m_model3_running = false;
     void draw_bezel(const Config& config);
     void load_bezel(const std::string& path);
@@ -505,6 +555,8 @@ private:
     bool                       m_picker_focus_search = false; ///< a letter was typed: the field takes it
     bool                       m_picker_searching    = false; ///< the search field is being typed in
     bool                       m_picker_drop_search  = false; ///< Escape: leave the field
+    bool                       m_picker_can_return   = false;
+    bool                       m_pending_return_to_picker = false;
 };
 
 }  // namespace sm2::osd

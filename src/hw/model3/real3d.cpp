@@ -581,7 +581,7 @@ u32 Real3D::read_register(unsigned reg) const
     }
     if (reg >= 20 && reg <= 32) {  // line of sight registers
         const unsigned index = (reg - 20) / 4;
-        return std::bit_cast<u32>(m_los[index]);
+        return f2u(m_los[index]);
     }
     return 0xffffffff;
 }

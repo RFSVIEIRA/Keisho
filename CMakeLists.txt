@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.22)
 
 # ██╗  ██╗███████╗██╗███████╗██╗  ██╗ ██████╗
 # ██║ ██╔╝██╔════╝██║██╔════╝██║  ██║██╔═══██╗
@@ -83,9 +83,25 @@ option(SM2_BUILD_TESTS  "Build unit tests"                          OFF)
 # Software rendering is always built. Vulkan defaults off so a bare build needs
 # no Vulkan driver. SM2_BUILD_OPENGL_DESKTOP and SM2_BUILD_OPENGL_ES are mutually
 # exclusive; GLES is for ARM targets.
+if(ANDROID)
+    # Android 15/16/17+ devices with 16 KB pages warn or fail unless ELF PT_LOAD
+    # segments are 16 KB aligned across both libSDL3.so and libmain.so.
+    add_link_options(-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384)
+    set(SM2_DEFAULT_GL_DESKTOP OFF)
+    set(SM2_DEFAULT_GL_ES      ON)
+    set(SM2_DEFAULT_MODEL1     ON)
+    set(SM2_DEFAULT_MODEL3     ON)
+else()
+    set(SM2_DEFAULT_GL_DESKTOP ON)
+    set(SM2_DEFAULT_GL_ES      OFF)
+    set(SM2_DEFAULT_MODEL1     ON)
+    set(SM2_DEFAULT_MODEL3     ON)
+endif()
 option(SM2_BUILD_VULKAN         "Build the Vulkan backend"                 OFF)
-option(SM2_BUILD_OPENGL_DESKTOP "Build the OpenGL 4.3 core desktop backend" ON)
-option(SM2_BUILD_OPENGL_ES      "Build the OpenGL ES 3.1 backend (ARM)"    OFF)
+option(SM2_BUILD_OPENGL_DESKTOP "Build the OpenGL 4.3 core desktop backend" ${SM2_DEFAULT_GL_DESKTOP})
+option(SM2_BUILD_OPENGL_ES      "Build the OpenGL ES 3.1 backend (ARM)"    ${SM2_DEFAULT_GL_ES})
+option(SM2_BUILD_MODEL1         "Build Sega Model 1 hardware support"      ${SM2_DEFAULT_MODEL1})
+option(SM2_BUILD_MODEL3         "Build Sega Model 3 hardware support"      ${SM2_DEFAULT_MODEL3})
 
 # Per-device light guns on Linux via evdev and libudev: SDL merges all mice into
 # one pointer, so this is the only way to tell two guns apart. ON makes a missing
@@ -100,7 +116,9 @@ set_property(CACHE SM2_EVDEV PROPERTY STRINGS AUTO ON OFF)
 # Vulkan through MoltenVK, which is why the portability-subset extensions are
 # requested opportunistically rather than gated on the platform.
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(ANDROID)
+    set(SM2_PLATFORM_ANDROID TRUE)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(SM2_PLATFORM_LINUX TRUE)
 elseif(APPLE)
     set(SM2_PLATFORM_MACOS TRUE)

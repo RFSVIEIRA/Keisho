@@ -65,15 +65,7 @@ constexpr u32 F2  = 0x40000000;
 /// The bits pack_st() supplies from the Flags struct; the rest live in m_st.
 constexpr u32 kFlagBits = AD | AU | AV | AZ | AN | ZC | IL | NR | ZD | MD | MU | MV | MZ | MN;
 
-[[nodiscard]] inline float u2f(u32 value)
-{
-    return std::bit_cast<float>(value);
-}
-
-[[nodiscard]] inline u32 f2u(float value)
-{
-    return std::bit_cast<u32>(value);
-}
+// Using sm2::u2f / sm2::f2u from core/types.h for C++20/libc++ compatibility.
 
 }  // namespace
 

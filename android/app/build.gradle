@@ -1,0 +1,88 @@
+plugins {
+    id 'com.android.application'
+}
+
+def generatedAssetsDir = layout.buildDirectory.dir("generated/assets/keisho")
+
+tasks.register('syncKeishoAssets', Sync) {
+    from('../../data/games.xml')
+    from('../../data/lang') {
+        into 'lang'
+        include '*.po', 'fonts/*.ttf', 'fonts/OFL.txt'
+    }
+    into generatedAssetsDir
+}
+
+android {
+    namespace = "io.github.keisho_emu.sm2f"
+    compileSdk = 35
+    ndkVersion = "25.1.8937393"
+
+    defaultConfig {
+        applicationId "io.github.keisho_emu.sm2f"
+        minSdk = 24
+        targetSdk = 35
+        versionCode 2
+        versionName "0.9.63"
+
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_PLATFORM=android-24",
+                          "-DANDROID_STL=c++_static",
+                          "-DSM2_BUILD_OPENGL_DESKTOP=OFF",
+                          "-DSM2_BUILD_OPENGL_ES=ON",
+                          "-DSM2_BUILD_VULKAN=ON",
+                          "-DSM2_BUILD_MODEL1=ON",
+                          "-DSM2_BUILD_MODEL3=ON",
+                          "-DSM2_BUILD_TESTS=OFF"
+                abiFilters 'arm64-v8a'
+            }
+        }
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            externalNativeBuild {
+                cmake {
+                    arguments "-DCMAKE_BUILD_TYPE=Release"
+                }
+            }
+        }
+        debug {
+            // Release optimization (-O3) is critical for emulator speed even in debug APKs,
+            // unless debugging C++ symbols directly. Keep RelWithDebInfo for fast playable debug APKs.
+            externalNativeBuild {
+                cmake {
+                    arguments "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+                }
+            }
+        }
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs += generatedAssetsDir
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path "../../CMakeLists.txt"
+        }
+    }
+
+    lint {
+        abortOnError = false
+    }
+}
+
+preBuild.dependsOn(syncKeishoAssets)

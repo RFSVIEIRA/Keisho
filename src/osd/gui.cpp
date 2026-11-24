@@ -17,6 +17,9 @@
 #include "osd/gui.h"
 #include "core/log.h"
 #include "core/net.h"
+#if defined(__ANDROID__)
+#  include "osd/android_platform.h"
+#endif
 #include "osd/i18n.h"
 #include "osd/input.h"
 #include "osd/scraper.h"
@@ -392,6 +395,7 @@ void Gui::new_frame()
                        static_cast<float>(m_framebuffer_height) / io.DisplaySize.y);
         }
     }
+    apply_scale();
     ImGui::NewFrame();
 }
 
@@ -406,6 +410,16 @@ void Gui::apply_scale()
     const float    fb = io.DisplayFramebufferScale.y > 0.0f ? io.DisplayFramebufferScale.y : 1.0f;
     float          scale = std::min(sx, sy);
     scale                = std::clamp(scale, std::clamp(1.0f / fb, 0.5f, 1.0f), 4.0f);
+#if defined(__ANDROID__)
+    const float display_scale = m_window != nullptr ? SDL_GetWindowDisplayScale(m_window) : 1.0f;
+    const float desired       = std::max(display_scale * 1.32f,
+                                         io.DisplaySize.y > 0.0f ? io.DisplaySize.y / 275.0f : 3.5f);
+    float       android_scale = std::max(scale, desired);
+    if (io.DisplaySize.x > 0.0f) {
+        android_scale = std::min(android_scale, io.DisplaySize.x / 520.0f);
+    }
+    scale = std::clamp(android_scale, 1.5f, 6.0f);
+#endif
 
     // Rescale from a base-style snapshot, since ScaleAllSizes is cumulative.
     if (scale != m_ui_scale) {
@@ -414,12 +428,20 @@ void Gui::apply_scale()
         style               = m_base_style;
         style.ScaleAllSizes(scale);
         style.FontScaleMain = scale;
+#if defined(__ANDROID__)
+        SM2_INFO("gui: display %.0fx%.0f, fb %.2fx%.2f, dpi %.2f -> ui_scale %.2f (font %.1fpx)",
+                 static_cast<double>(io.DisplaySize.x), static_cast<double>(io.DisplaySize.y),
+                 static_cast<double>(io.DisplayFramebufferScale.x), static_cast<double>(io.DisplayFramebufferScale.y),
+                 static_cast<double>(display_scale), static_cast<double>(scale),
+                 static_cast<double>(15.0f * scale));
+#endif
     }
 }
 
 bool Gui::draw(Config& config, const std::vector<std::string>& gpu_names,
                float measured_hz, const char* renderer_label, Input* input)
 {
+    m_active_renderer = renderer_label != nullptr ? renderer_label : "";
     apply_theme(config);
     apply_scale();
     if (config.language != m_language) {
@@ -484,7 +506,12 @@ bool Gui::draw(Config& config, const std::vector<std::string>& gpu_names,
         m_mouse_grabbed = grab;
     }
     m_present_area = {};
-    if (config.bezel && fullscreen && !m_current_game.empty() && !m_picker_enabled
+#if defined(__ANDROID__)
+    const bool bezel_window_ok = true;
+#else
+    const bool bezel_window_ok = fullscreen;
+#endif
+    if (config.bezel && bezel_window_ok && !m_current_game.empty() && !m_picker_enabled
         && m_present_aspect != AspectMode::Widescreen && m_present_aspect != AspectMode::Stretch) {
         draw_bezel(config);
     }
@@ -505,9 +532,14 @@ bool Gui::draw(Config& config, const std::vector<std::string>& gpu_names,
 
     if (m_visible) {
         draw_menu(config, gpu_names, input, measured_hz);
-    } else {
+    } else if (!m_picker_enabled) {
         m_popup_open = false;
     }
+#if defined(__ANDROID__)
+    if (m_saves_modal_open && m_palette != nullptr) {
+        draw_saves_modal(*m_palette, config);
+    }
+#endif
     autosave(config);
 
     if (m_load_error.has_value()) {
@@ -520,6 +552,11 @@ bool Gui::draw(Config& config, const std::vector<std::string>& gpu_names,
 void Gui::end_frame()
 {
     if (!m_initialised) return;
+#if defined(__ANDROID__)
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        m_touch_scrolling = false;
+    }
+#endif
     // Every frame, even if nothing was drawn: the render backend reads
     // ImGui::GetDrawData() afterwards.
     ImGui::Render();
@@ -553,6 +590,27 @@ std::string path_label(const std::string& path, const char* none)
         return "~" + path.substr(std::strlen(home));
     }
     return path;
+}
+
+void safe_work_rect(SDL_Window* window, const ImGuiViewport* vp, ImVec2* out_pos, ImVec2* out_size)
+{
+    *out_pos  = vp->WorkPos;
+    *out_size = vp->WorkSize;
+#if defined(__ANDROID__)
+    SDL_Rect safe{};
+    if (window != nullptr && SDL_GetWindowSafeArea(window, &safe) && safe.w > 0 && safe.h > 0) {
+        const float x0 = std::max(vp->WorkPos.x, static_cast<float>(safe.x));
+        const float y0 = std::max(vp->WorkPos.y, static_cast<float>(safe.y));
+        const float x1 = std::min(vp->WorkPos.x + vp->WorkSize.x, static_cast<float>(safe.x + safe.w));
+        const float y1 = std::min(vp->WorkPos.y + vp->WorkSize.y, static_cast<float>(safe.y + safe.h));
+        if (x1 - x0 >= vp->WorkSize.x * 0.5f && y1 - y0 >= vp->WorkSize.y * 0.5f) {
+            *out_pos  = ImVec2(x0, y0);
+            *out_size = ImVec2(x1 - x0, y1 - y0);
+        }
+    }
+#else
+    (void)window;
+#endif
 }
 
 }  // namespace
@@ -626,11 +684,18 @@ void Gui::draw_menu(Config& config, const std::vector<std::string>& gpu_names, I
     }
 
     // The frame: as wide as a comfortable page, as tall as the window allows.
+    ImVec2 work_pos, work_size;
+    safe_work_rect(m_window, vp, &work_pos, &work_size);
+#if defined(__ANDROID__)
+    const float  margin = kit.px(6.0f);
+    const ImVec2 size(work_size.x - margin * 2.0f, std::max(kit.px(180.0f), work_size.y - margin * 2.0f));
+#else
     const float  margin = kit.px(14.0f);
-    const ImVec2 size(std::min(vp->WorkSize.x - margin * 2.0f, kit.px(1000.0f)),
-                      std::max(kit.px(200.0f), vp->WorkSize.y - margin * 2.0f));
-    const ImVec2 a(std::floor(vp->WorkPos.x + (vp->WorkSize.x - size.x) * 0.5f),
-                   std::floor(vp->WorkPos.y + (vp->WorkSize.y - size.y) * 0.5f));
+    const ImVec2 size(std::min(work_size.x - margin * 2.0f, kit.px(1000.0f)),
+                      std::max(kit.px(200.0f), work_size.y - margin * 2.0f));
+#endif
+    const ImVec2 a(std::floor(work_pos.x + (work_size.x - size.x) * 0.5f),
+                   std::floor(work_pos.y + (work_size.y - size.y) * 0.5f));
     const ImVec2 b(a.x + size.x, a.y + size.y);
 
     ImGui::SetNextWindowPos(a);
@@ -701,6 +766,49 @@ void Gui::draw_menu(Config& config, const std::vector<std::string>& gpu_names, I
         m_nav.target_row  = 0;
     }
 
+#if defined(__ANDROID__)
+    static_cast<void>(measured_hz);
+    const float pad = kit.px(10.0f);
+    ImGui::PushClipRect(a, b, true);
+    float top_h = kit.px(32.0f);
+    draw_mobile_topbar(p, kit, config, ImVec2(a.x + pad, a.y + kit.px(8.0f)), size.x - pad * 2.0f, false, &top_h);
+    const float bot_h    = kit.px(32.0f);
+    const float foot_top = b.y - kit.px(6.0f) - bot_h;
+    const float page_top = a.y + kit.px(8.0f) + top_h + kit.px(6.0f);
+
+    ImGui::SetCursorScreenPos(ImVec2(a.x + pad, page_top));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(kit.px(4.0f), 0.0f));
+    ImGui::PushID(m_page);
+    ImGui::BeginChild("page", ImVec2(size.x - pad * 2.0f, foot_top - kit.px(6.0f) - page_top),
+                      ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoBackground);
+    ImGui::PopStyleVar();
+    touch_drag_scroll(false);
+    if (m_page != kPageAudio) m_device_channels = -1;
+    switch (m_page) {
+        case kPageDisplay:
+            page_display(kit, config, gpu_names);
+            break;
+        case kPageInput:
+            page_input(kit, config, input);
+            break;
+        case kPageAudio:
+            page_audio(kit, config);
+            break;
+        case kPageSystem:
+        default:
+            page_paths(kit, config);
+            page_system(kit, config);
+            page_link(kit, config);
+            page_about(kit);
+            break;
+    }
+    ImGui::Dummy(ImVec2(0.0f, kit.px(12.0f)));
+    ImGui::EndChild();
+    ImGui::PopID();
+
+    draw_mobile_bottombar(p, kit, config, ImVec2(a.x + pad, foot_top), size.x - pad * 2.0f, false, nullptr);
+    ImGui::PopClipRect();
+#else
     // -- tabs ----------------------------------------------------------------
     const std::array<ui::Kit::Tab, kPageCount> tabs = {{
         {tr("Display"), ui::Kit::Icon::Display},
@@ -780,23 +888,44 @@ void Gui::draw_menu(Config& config, const std::vector<std::string>& gpu_names, I
     // -- foot ----------------------------------------------------------------
     list->AddLine(ImVec2(a.x, foot_top), ImVec2(b.x, foot_top), p.line, kit.stroke());
     {
-        std::string keys = trf("%s: back", tr("Esc"));
+        const bool   show_games = m_picker_can_return && !m_current_game.empty();
+        const char*  close_lbl  = m_current_game.empty() ? tr("Close") : tr("Resume");
+        const char*  games_lbl  = tr("Games");
+        const ImVec2 close_sz   = kit.button_size(close_lbl);
+        const ImVec2 games_sz   = show_games ? kit.button_size(games_lbl) : ImVec2(0.0f, 0.0f);
+        const float  btn_gap    = kit.px(8.0f);
+        const ImVec2 close_at(b.x - pad - close_sz.x, foot_top + (foot_h - close_sz.y) * 0.5f);
+        const ImVec2 games_at(close_at.x - btn_gap - games_sz.x, foot_top + (foot_h - games_sz.y) * 0.5f);
+        if (kit.button_at(close_lbl, close_at, ui::Kit::Tone::Primary)) {
+            m_visible = false;
+        }
+        if (show_games && kit.button_at(games_lbl, games_at, ui::Kit::Tone::Plain)) {
+            m_pending_return_to_picker = true;
+            m_visible                  = false;
+        }
+        const float buttons_left = show_games ? games_at.x : close_at.x;
+
+        std::string keys;
+#if !defined(__ANDROID__)
+        keys = trf("%s: back", tr("Esc"));
         if (ImGui::GetIO().BackendFlags & ImGuiBackendFlags_HasGamepad) {
             keys += "   ";
             keys += tr("LB/RB: pages");
         }
+#endif
         if (m_saved_flash > 0.0f) {
-            keys = std::string(tr("Saved")) + "   " + keys;
+            keys = keys.empty() ? std::string(tr("Saved")) : std::string(tr("Saved")) + "   " + keys;
         }
-        const float keys_w = ImGui::CalcTextSize(keys.c_str()).x;
-        const float ty     = foot_top + (foot_h - ImGui::GetFontSize()) * 0.5f;
+        const float keys_w  = keys.empty() ? 0.0f : ImGui::CalcTextSize(keys.c_str()).x;
+        const float keys_x  = buttons_left - kit.px(12.0f) - keys_w;
+        const float ty      = foot_top + (foot_h - ImGui::GetFontSize()) * 0.5f;
         if (m_saved_flash > 0.0f) {
             const float alpha = std::min(1.0f, m_saved_flash / 0.5f);
-            list->AddText(ImVec2(b.x - pad - keys_w, ty), ui::with_alpha(p.good, alpha), tr("Saved"));
+            list->AddText(ImVec2(keys_x, ty), ui::with_alpha(p.good, alpha), tr("Saved"));
             const float saved_w = ImGui::CalcTextSize(tr("Saved")).x;
-            list->AddText(ImVec2(b.x - pad - keys_w + saved_w, ty), p.faint, keys.c_str() + std::strlen(tr("Saved")));
-        } else {
-            list->AddText(ImVec2(b.x - pad - keys_w, ty), p.faint, keys.c_str());
+            list->AddText(ImVec2(keys_x + saved_w, ty), p.faint, keys.c_str() + std::strlen(tr("Saved")));
+        } else if (!keys.empty()) {
+            list->AddText(ImVec2(keys_x, ty), p.faint, keys.c_str());
         }
         // The help at the left: the row's tip, else the game and its speed.
         std::string help = kit.focused_tip();
@@ -807,16 +936,24 @@ void Gui::draw_menu(Config& config, const std::vector<std::string>& gpu_names, I
                 help = tr("Changes are saved as you make them.");
             }
         }
-        const float help_w = std::max(0.0f, size.x - pad * 3.0f - keys_w);
+        const float right_edge = keys.empty() ? buttons_left : keys_x;
+        const float help_w     = std::max(0.0f, right_edge - (a.x + pad) - kit.px(12.0f));
         ImFont*     font   = ImGui::GetFont();
         const float help_h = font->CalcTextSizeA(kit.small(), FLT_MAX, help_w, help.c_str()).y;
         list->AddText(font, kit.small(), ImVec2(a.x + pad, foot_top + (foot_h - help_h) * 0.5f), p.muted,
                       help.c_str(), nullptr, help_w);
     }
     ImGui::PopClipRect();
+#endif
 
     // Popups of the page (the folder picker) open from the frame's level, so
     // they survive a page change.
+#if defined(__ANDROID__)
+    if (m_rom_folders_modal_open && m_palette != nullptr && m_dir_picker_target == DirPickerTarget::None
+        && !m_dir_picker_request_open) {
+        draw_rom_folders_modal(*m_palette, config);
+    }
+#endif
     draw_dir_picker_popup(config);
 
     m_popup_open = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
@@ -838,7 +975,6 @@ void Gui::draw_menu(Config& config, const std::vector<std::string>& gpu_names, I
 
 void Gui::page_display(ui::Kit& kit, Config& config, const std::vector<std::string>& gpu_names)
 {
-    const char* next_launch = tr("next launch");
     const char* model12     = tr("Model 1 & 2 only");
 
     kit.begin_group(tr("Renderer"));
@@ -855,7 +991,7 @@ void Gui::page_display(ui::Kit& kit, Config& config, const std::vector<std::stri
         }
         kit.tip(tr("Which renderer draws the game. The software renderer needs no GPU and suits "
                    "small boards; Vulkan and OpenGL pull ahead on desktop graphics."));
-        if (kit.choice(tr("Renderer"), tr("What draws the game."), labels, current, {.badge = next_launch})) {
+        if (kit.choice(tr("Renderer"), tr("What draws the game."), labels, current)) {
             config.graphics_backend = m_available_renderers[static_cast<size_t>(current)];
         }
     }
@@ -866,11 +1002,11 @@ void Gui::page_display(ui::Kit& kit, Config& config, const std::vector<std::stri
             labels.push_back(gpu_names[i]);
             if (gpu_names[i] == config.gpu) current = static_cast<int>(i) + 1;
         }
-        if (kit.dropdown(tr("Graphics card"), tr("The device the GPU renderers draw on."), labels, current,
-                         {.badge = next_launch})) {
+        if (kit.dropdown(tr("Graphics card"), tr("The device the GPU renderers draw on."), labels, current)) {
             config.gpu = current == 0 ? std::string() : gpu_names[static_cast<size_t>(current) - 1];
         }
     }
+#if !defined(__ANDROID__)
     kit.tip(tr("Waits for the display before showing a frame. Stops tearing; adds up to a frame of delay."));
     kit.toggle(tr("Vsync"), tr("Wait for vertical blank before presenting."), config.vsync);
     kit.toggle(tr("Fullscreen"), nullptr, config.fullscreen);
@@ -884,6 +1020,7 @@ void Gui::page_display(ui::Kit& kit, Config& config, const std::vector<std::stri
             config.window_height = static_cast<u32>(h);
         }
     }
+#endif
     kit.end_group();
 
     kit.begin_group(tr("Picture"));
@@ -892,8 +1029,7 @@ void Gui::page_display(ui::Kit& kit, Config& config, const std::vector<std::stri
         int scale = std::clamp(static_cast<int>(config.render_scale), 1, 8) - 1;
         kit.tip(tr("Internal 3D rendering resolution, times the native 496x384. Higher is crisper 3D; "
                    "the 2D stays sharp either way. GPU renderers only."));
-        if (kit.choice(tr("3D render scale"), tr("1x is the arcade's own. 8x suits a 4K display."), kScales, scale,
-                       {.badge = next_launch})) {
+        if (kit.choice(tr("3D render scale"), tr("1x is the arcade's own. 8x suits a 4K display."), kScales, scale)) {
             config.render_scale = static_cast<u32>(scale + 1);
         }
     }
@@ -924,9 +1060,9 @@ void Gui::page_display(ui::Kit& kit, Config& config, const std::vector<std::stri
             config.brightness = static_cast<u32>(brightness);
         }
     }
-    kit.tip(tr("In fullscreen, frame the 4:3 picture with an image from the bezels folder: <game>.png, "
+    kit.tip(tr("Frame the 4:3 picture with an image from that model's bezels folder: <game>.png, "
                "the parent set's, or default.png. The picture fills the image's transparent window."));
-    kit.toggle(tr("Bezel"), tr("Cabinet artwork around the picture in fullscreen."), config.bezel);
+    kit.toggle(tr("Bezel"), tr("Cabinet artwork around the picture."), config.bezel);
     kit.end_group();
 
     kit.begin_group(tr("CRT filter"));
@@ -1032,8 +1168,10 @@ void Gui::page_display(ui::Kit& kit, Config& config, const std::vector<std::stri
     kit.tip(tr("On a big.LITTLE chip, the drawing runs on the little cores and leaves the big ones to the emulation."));
     kit.toggle(tr("Draw on the slow cores"), tr("big.LITTLE hosts, with the second thread."),
                config.software_slow_cores, {.disabled = !config.software_async});
+#if SM2_HAVE_MODEL3
     kit.tip(tr("Model 3 builds each frame on a second thread while the next one is emulated; shown a frame later."));
     kit.toggle(tr("Model 3 frame build on a second thread"), tr("Faster; a frame of latency."), config.model3_async);
+#endif
     kit.end_group();
 }
 
@@ -1345,40 +1483,129 @@ void Gui::page_link(ui::Kit& kit, Config& config)
 // Paths
 // ---------------------------------------------------------------------------
 
+namespace {
+
+[[nodiscard]] std::string suggested_media_start(const std::string& current_dir,
+                                                const std::string& rom_dir,
+                                                std::initializer_list<const char*> preferred_subs)
+{
+    namespace fs = std::filesystem;
+    if (!current_dir.empty() || rom_dir.empty()) {
+        return current_dir;
+    }
+    std::error_code ec;
+    const fs::path  parent = fs::path(rom_dir).parent_path();
+    if (parent.empty()) {
+        return {};
+    }
+    for (const char* sub : preferred_subs) {
+        const fs::path cand = parent / sub;
+        if (fs::is_directory(cand, ec) && !ec) {
+            return cand.string();
+        }
+    }
+    if (fs::is_directory(parent, ec) && !ec) {
+        return parent.string();
+    }
+    return {};
+}
+
+[[nodiscard]] std::string suggested_cover_start(const std::string& cover_dir,
+                                                const std::string& rom_dir)
+{
+    return suggested_media_start(
+        cover_dir, rom_dir,
+        {"medium_artwork/artwork_front", "medium_artwork", "artwork", "covers"});
+}
+
+[[nodiscard]] std::string suggested_bezel_start(const std::string& bezel_dir,
+                                                const std::string& rom_dir)
+{
+    return suggested_media_start(
+        bezel_dir, rom_dir,
+        {"medium_artwork/bezel_day", "medium_artwork/bezel_night", "medium_artwork", "bezels"});
+}
+
+}  // namespace
+
 void Gui::page_paths(ui::Kit& kit, Config& config)
 {
     const auto dir_row = [&](const char* name, const char* about, std::string& value, DirPickerTarget target,
-                             const char* tip, const char* empty_means) {
+                             const char* tip, const char* empty_means,
+                             const std::string& initial_override = {}) {
         bool browse = false;
         if (tip != nullptr) kit.tip(tip);
         ui::Kit::Opts opts;
         opts.id = name;
         kit.field(name, about, value, empty_means, tr("Browse..."), &browse, opts);
         if (browse) {
-            open_dir_picker(target, value);
+            open_dir_picker(target, initial_override.empty() ? value : initial_override);
         }
     };
 
-    kit.begin_group(tr("Games"));
-    kit.tip(tr("One zip or 7z per game, named as in MAME. A game launched by name is loaded as <name>.zip or "
-               "<name>.7z from its system's folder; Model 1 and Model 3 fall back to the Model 2 folder."));
+#if SM2_HAVE_MODEL1
+    kit.begin_group("Model 1");
+    kit.tip(tr("Folders for Model 1 ROMs, local covers (<rom>.png/.jpg) and bezels (<game>.png or default.png)."));
     dir_row(tr("Model 1 ROM folder"), nullptr, config.model1_rom_dir, DirPickerTarget::Model1RomDir,
-            tr("Where the Model 1 ROM archives live. Empty means the Model 2 folder."), tr("the Model 2 folder"));
+            tr("Only Model 1 games are scanned and shown from this folder."), tr("not set"));
+    dir_row(tr("Model 1 covers folder"), nullptr, config.model1_artwork_dir, DirPickerTarget::Model1ArtworkDir,
+            tr("Local cover images matching Model 1 ROM file names."), tr("not set"),
+            suggested_cover_start(config.model1_artwork_dir, config.model1_rom_dir));
+    dir_row(tr("Model 1 bezels folder"), nullptr, config.model1_bezel_dir, DirPickerTarget::Model1BezelDir,
+            tr("Model 1 bezel images: <game>.png, the parent set's, or default.png."), tr("not set"),
+            suggested_bezel_start(config.model1_bezel_dir, config.model1_rom_dir));
+    kit.end_group();
+#endif
+
+    kit.begin_group("Model 2");
+    kit.tip(tr("Folders for Model 2 ROMs, local covers (<rom>.png/.jpg) and bezels (<game>.png or default.png)."));
     dir_row(tr("Model 2 ROM folder"), tr("One zip or 7z per game, named as in MAME."), config.model2_rom_dir,
-            DirPickerTarget::Model2RomDir, tr("Where the Model 2 ROM archives live, and any Model 1 or Model 3 archives "
-                                              "kept with them."), tr("not set"));
-    dir_row(tr("Model 3 ROM folder"), nullptr, config.model3_rom_dir, DirPickerTarget::Model3RomDir,
-            tr("Where the Model 3 ROM archives live. Empty means the Model 2 folder."), tr("the Model 2 folder"));
+            DirPickerTarget::Model2RomDir, tr("Only Model 2 games are scanned and shown from this folder."),
+            tr("not set"));
+    dir_row(tr("Model 2 covers folder"), nullptr, config.model2_artwork_dir, DirPickerTarget::Model2ArtworkDir,
+            tr("Local cover images matching Model 2 ROM file names."), tr("not set"),
+            suggested_cover_start(config.model2_artwork_dir, config.model2_rom_dir));
+    dir_row(tr("Model 2 bezels folder"), nullptr, config.model2_bezel_dir, DirPickerTarget::Model2BezelDir,
+            tr("Model 2 bezel images: <game>.png, the parent set's, or default.png."), tr("not set"),
+            suggested_bezel_start(config.model2_bezel_dir, config.model2_rom_dir));
     kit.end_group();
 
+#if SM2_HAVE_MODEL3
+    kit.begin_group("Model 3");
+    kit.tip(tr("Folders for Model 3 ROMs, local covers (<rom>.png/.jpg) and bezels (<game>.png or default.png)."));
+    dir_row(tr("Model 3 ROM folder"), nullptr, config.model3_rom_dir, DirPickerTarget::Model3RomDir,
+            tr("Only Model 3 games are scanned and shown from this folder."), tr("not set"));
+    dir_row(tr("Model 3 covers folder"), nullptr, config.model3_artwork_dir, DirPickerTarget::Model3ArtworkDir,
+            tr("Local cover images matching Model 3 ROM file names."), tr("not set"),
+            suggested_cover_start(config.model3_artwork_dir, config.model3_rom_dir));
+    dir_row(tr("Model 3 bezels folder"), nullptr, config.model3_bezel_dir, DirPickerTarget::Model3BezelDir,
+            tr("Model 3 bezel images: <game>.png, the parent set's, or default.png."), tr("not set"),
+            suggested_bezel_start(config.model3_bezel_dir, config.model3_rom_dir));
+    kit.end_group();
+#endif
+
     kit.begin_group(tr("Saves and pictures"));
+#if defined(__ANDROID__)
+    {
+        const bool granted = android_has_storage_access();
+        static constexpr std::array<const char*, 1> kAllow = {N_("Allow Access")};
+        if (granted) {
+            kit.status(tr("Shared storage (/sdcard) access is granted."), kit.palette().good);
+        } else {
+            if (kit.actions(tr("Shared storage"), tr("Needed only for folders outside the app's own ROM folder."),
+                            tr_all(kAllow)) == 0) {
+                android_request_storage_access();
+            }
+        }
+    }
+#endif
     dir_row(tr("Saves"), tr("NVRAM, EEPROM, save states and textures."), config.nvram_dir, DirPickerTarget::NvramDir,
             tr("Battery-backed saves: per-game NVRAM (.nv) and EEPROM (.eeprom) images, high scores and operator settings."),
             nullptr);
     dir_row(tr("Screenshots"), nullptr, config.screenshot_dir, DirPickerTarget::ScreenshotDir,
             tr("Where screenshots are written."), nullptr);
-    dir_row(tr("Bezels"), nullptr, config.bezel_dir, DirPickerTarget::BezelDir,
-            tr("Bezel images: <game>.png, the parent set's, or default.png. Empty means a bezels folder beside keisho.ini."),
+    dir_row(tr("Shared bezels"), nullptr, config.bezel_dir, DirPickerTarget::BezelDir,
+            tr("Fallback bezel images when no per-model bezels folder is set: <game>.png, the parent set's, or default.png."),
             tr("beside keisho.ini"));
     dir_row(tr("Crosshairs"), nullptr, config.crosshair_dir, DirPickerTarget::CrosshairDir,
             tr("Crosshair images: <game>-p1.png (-p2 for player 2) or <game>.png for both, then the parent set's, "
@@ -1744,12 +1971,16 @@ void Gui::release_bezel()
 void Gui::draw_bezel(const Config& config)
 {
     namespace fs = std::filesystem;
-    const fs::path dir = config.bezel_dir.empty()
+    const std::string& model_dir = m_current_system == "Model 1" ? config.model1_bezel_dir
+                                 : m_current_system == "Model 3" ? config.model3_bezel_dir
+                                                                 : config.model2_bezel_dir;
+    const std::string& chosen_dir = !model_dir.empty() ? model_dir : config.bezel_dir;
+    const fs::path dir = chosen_dir.empty()
                              ? fs::path(m_config_path.empty() ? default_config_path() : m_config_path)
                                        .parent_path()
                                    / "bezels"
-                             : fs::path(config.bezel_dir);
-    const std::string lookup = dir.string() + '\n' + m_current_game;
+                             : fs::path(chosen_dir);
+    const std::string lookup = dir.string() + '\n' + m_current_system + '\n' + m_current_game;
     if (lookup != m_bezel_lookup) {
         m_bezel_lookup = lookup;
         std::string found;
@@ -2692,6 +2923,32 @@ std::vector<PanelCell> draw_cabinet_panel(ui::Kit& kit, std::vector<CabinetContr
     return cells;
 }
 
+void draw_touch_gun_aim_choice(ui::Kit& kit, Config& config, bool disabled)
+{
+    static constexpr std::array<const char*, 2> kTouchGunModes = {
+        N_("Direct touch"), N_("Analog stick")
+    };
+    int aim_mode = static_cast<int>(config.touch_gun_aim);
+    kit.tip(tr("Touch the screen directly to aim and fire, or move the sight from a fixed "
+               "corner analog stick without fingers covering the game."));
+    if (kit.choice(tr("Gun touch aim"), tr("Direct screen touch or fixed corner stick."),
+                   tr_all(kTouchGunModes), aim_mode, {.disabled = disabled})) {
+        config.touch_gun_aim = static_cast<Config::TouchGunAim>(aim_mode);
+    }
+}
+
+void draw_gun_stick_sensitivity_slider(ui::Kit& kit, Config& config, bool disabled)
+{
+    int  sensitivity = static_cast<int>(config.lightgun_stick_sensitivity);
+    char shown[16];
+    std::snprintf(shown, sizeof shown, "%d%%", sensitivity);
+    kit.tip(tr("Speed and response of analog-stick aiming in light-gun games (virtual stick or gamepad)."));
+    if (kit.slider(tr("Stick aim sensitivity"), nullptr, sensitivity, 25, 300, 5, shown,
+                   {.disabled = disabled})) {
+        config.lightgun_stick_sensitivity = static_cast<u32>(sensitivity);
+    }
+}
+
 }  // namespace
 
 bool Gui::capturing_input() const
@@ -2726,6 +2983,37 @@ void Gui::page_gamepad(ui::Kit& kit, Config& config, Input* input)
         m_pad_family = key;
         cancel_captures();
     };
+
+    kit.begin_group(tr("On-screen gamepad"));
+    {
+        static constexpr std::array<const char*, 3> kVirtualPadModes = {
+            N_("Automatic"), N_("On"), N_("Off")
+        };
+        int mode = static_cast<int>(config.virtual_gamepad);
+        kit.tip(tr("Shows multi-touch overlay controls tailored to each arcade cabinet (steering/pedals, twin stick, "
+                   "light gun, or buttons). Automatic enables it when no physical controller is connected."));
+        if (kit.choice(tr("Virtual gamepad"), tr("Multi-touch overlay controls."), tr_all(kVirtualPadModes), mode)) {
+            config.virtual_gamepad = static_cast<Config::VirtualGamepadMode>(mode);
+        }
+        const bool off = config.virtual_gamepad == Config::VirtualGamepadMode::Off;
+        int opacity = static_cast<int>(config.virtual_gamepad_opacity);
+        char op_shown[16];
+        std::snprintf(op_shown, sizeof op_shown, "%d%%", opacity);
+        if (kit.slider(tr("Opacity"), tr("Transparency of the on-screen buttons."), opacity, 15, 100, 5, op_shown,
+                       {.disabled = off})) {
+            config.virtual_gamepad_opacity = static_cast<u32>(opacity);
+        }
+        int scale = static_cast<int>(config.virtual_gamepad_scale);
+        char sc_shown[16];
+        std::snprintf(sc_shown, sizeof sc_shown, "%d%%", scale);
+        if (kit.slider(tr("Button size"), tr("Scale of the on-screen sticks and buttons."), scale, 60, 150, 5, sc_shown,
+                       {.disabled = off})) {
+            config.virtual_gamepad_scale = static_cast<u32>(scale);
+        }
+        draw_touch_gun_aim_choice(kit, config, off);
+        draw_gun_stick_sensitivity_slider(kit, config, off || config.touch_gun_aim != Config::TouchGunAim::Stick);
+    }
+    kit.end_group();
 
     kit.begin_group(tr("Gamepad"));
     if (pads > 0) {
@@ -3749,6 +4037,8 @@ void Gui::page_lightgun(ui::Kit& kit, Config& config, Input* input)
                "the edge at full tilt. Off, the stick moves the crosshair like a mouse."));
     kit.toggle(tr("Centred stick aim"), tr("A stick points at the screen instead of moving the sight."),
                config.lightgun_pad_centred);
+    draw_touch_gun_aim_choice(kit, config, config.virtual_gamepad == Config::VirtualGamepadMode::Off);
+    draw_gun_stick_sensitivity_slider(kit, config, false);
     kit.tip(tr("Hide the white flash Virtua Cop, Virtua Cop 2 and House of the Dead show on each shot."));
     kit.toggle(tr("Hide shot flash"), tr("The white flash of the gun games."), config.lightgun_hide_flash);
     kit.end_group();
@@ -3924,8 +4214,14 @@ void Gui::draw_fps_overlay(float measured_hz, const char* renderer_label)
     const ImVec2 window_size{text_size.x + padding.x * 2.0F, text_size.y + padding.y * 2.0F};
 
     ImGui::SetNextWindowPos(
+#if defined(__ANDROID__)
+        ImVec2(viewport->WorkPos.x + std::max(margin.x, viewport->WorkSize.x * 0.032f),
+               viewport->WorkPos.y + std::max(108.0f, viewport->WorkSize.y * 0.165f))
+#else
         ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - window_size.x - margin.x,
-               viewport->WorkPos.y + margin.y));
+               viewport->WorkPos.y + margin.y)
+#endif
+    );
     ImGui::SetNextWindowSize(window_size);
     ImGui::SetNextWindowBgAlpha(0.55F);
 
@@ -3968,10 +4264,16 @@ void Gui::draw_load_error()
     }
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const bool wide_mobile        =
+#if defined(__ANDROID__)
+        true;
+#else
+        false;
+#endif
     ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSizeConstraints(ImVec2(viewport->WorkSize.x * 0.4f, 0.0f),
-                                        ImVec2(viewport->WorkSize.x * 0.8f,
-                                               viewport->WorkSize.y * 0.8f));
+    ImGui::SetNextWindowSizeConstraints(
+        ImVec2(viewport->WorkSize.x * (wide_mobile ? 0.72f : 0.4f), 0.0f),
+        ImVec2(viewport->WorkSize.x * (wide_mobile ? 0.92f : 0.8f), viewport->WorkSize.y * 0.85f));
     const std::string title = std::string(tr("Could not start the game")) + id;
     if (!ImGui::BeginPopupModal(title.c_str(), nullptr,
                                 ImGuiWindowFlags_AlwaysAutoResize
@@ -3984,14 +4286,14 @@ void Gui::draw_load_error()
         ImGui::TextUnformatted(dialog.game.c_str());
         ImGui::Spacing();
     }
-    ImGui::PushTextWrapPos(viewport->WorkSize.x * 0.75f);
+    ImGui::PushTextWrapPos(viewport->WorkSize.x * (wide_mobile ? 0.86f : 0.75f));
     ImGui::TextUnformatted(dialog.message.c_str());
     ImGui::PopTextWrapPos();
 
     if (!dialog.missing.empty()) {
         ImGui::Spacing();
         ImGui::TextUnformatted(tr("Missing:"));
-        const float rows   = static_cast<float>(std::min<usize>(dialog.missing.size(), 12));
+        const float rows   = static_cast<float>(std::min<usize>(dialog.missing.size(), 10));
         const float height = rows * ImGui::GetTextLineHeightWithSpacing()
                            + ImGui::GetStyle().WindowPadding.y * 2.0f;
         if (ImGui::BeginChild("##missing", ImVec2(0.0f, height), ImGuiChildFlags_Borders)) {
@@ -4010,6 +4312,20 @@ void Gui::draw_load_error()
         }
         ImGui::SameLine();
     }
+
+#if defined(__ANDROID__)
+    if (!android_has_storage_access()) {
+        ImGui::Spacing();
+        if (ImGui::Button(tr_id("Grant files access"))) {
+            android_request_storage_access();
+            ImGui::CloseCurrentPopup();
+            m_load_error.reset();
+            ImGui::EndPopup();
+            return;
+        }
+        ImGui::SameLine();
+    }
+#endif
 
     if (ImGui::Button(tr_id("OK")) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)
         || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)) {
@@ -4214,13 +4530,18 @@ void Gui::open_dir_picker(DirPickerTarget target, const std::string& initial)
     std::error_code ec;
     fs::path        start(initial);
     if (initial.empty() || !fs::is_directory(start, ec)) {
-        // Fall back to the home directory, then cwd.
-#ifdef _WIN32
+        // Fall back to Android storage / home directory, then cwd.
+#ifdef __ANDROID__
+        std::string fallback = android_shared_storage_dir();
+        if (fallback.empty()) fallback = android_external_root_dir();
+        start = !fallback.empty() ? fs::path(fallback) : fs::current_path(ec);
+#elif defined(_WIN32)
         const char* home = std::getenv("USERPROFILE");
+        start = (home != nullptr) ? fs::path(home) : fs::current_path(ec);
 #else
         const char* home = std::getenv("HOME");
-#endif
         start = (home != nullptr) ? fs::path(home) : fs::current_path(ec);
+#endif
     }
 
     m_dir_picker_path = start.string();
@@ -4230,39 +4551,131 @@ void Gui::open_dir_picker(DirPickerTarget target, const std::string& initial)
     m_dir_picker_request_open = true;
 }
 
+#if defined(__ANDROID__)
+void Gui::touch_drag_scroll(bool horizontal)
+{
+    ImGuiWindow* win = ImGui::GetCurrentWindow();
+    if (win == nullptr) {
+        return;
+    }
+    if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows
+                                | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+        return;
+    }
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantTextInput) {
+        return;
+    }
+
+    const float scale  = m_ui_scale > 0.0f ? m_ui_scale : 1.0f;
+    const float thresh = 6.0f * scale;
+    const ImVec2 drag  = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f);
+    const unsigned int win_id = static_cast<unsigned int>(win->ID);
+
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        const float primary = horizontal ? drag.x : drag.y;
+        const float cross   = horizontal ? drag.y : drag.x;
+        const float max_s   = horizontal ? ImGui::GetScrollMaxX() : ImGui::GetScrollMaxY();
+        if (!m_touch_scrolling && max_s > 1.0f && std::abs(primary) > thresh
+            && std::abs(primary) >= std::abs(cross)) {
+            m_touch_scrolling     = true;
+            m_touch_scroll_window = win_id;
+        }
+        if (m_touch_scrolling && m_touch_scroll_window == win_id) {
+            ImGui::ClearActiveID();
+            const float delta = horizontal ? io.MouseDelta.x : io.MouseDelta.y;
+            if (horizontal) {
+                ImGui::SetScrollX(std::clamp(ImGui::GetScrollX() - delta, 0.0f, ImGui::GetScrollMaxX()));
+            } else {
+                ImGui::SetScrollY(std::clamp(ImGui::GetScrollY() - delta, 0.0f, ImGui::GetScrollMaxY()));
+            }
+            const float dt = std::max(io.DeltaTime, 1.0f / 240.0f);
+            m_touch_scroll_vel = -delta / dt;
+        }
+        return;
+    }
+
+    if (m_touch_scrolling && m_touch_scroll_window == win_id) {
+        ImGui::ClearActiveID();
+    }
+    if (m_touch_scroll_window == win_id && std::abs(m_touch_scroll_vel) > 12.0f) {
+        const float max_s = horizontal ? ImGui::GetScrollMaxX() : ImGui::GetScrollMaxY();
+        if (horizontal) {
+            ImGui::SetScrollX(std::clamp(ImGui::GetScrollX() + m_touch_scroll_vel * io.DeltaTime, 0.0f, max_s));
+        } else {
+            ImGui::SetScrollY(std::clamp(ImGui::GetScrollY() + m_touch_scroll_vel * io.DeltaTime, 0.0f, max_s));
+        }
+        m_touch_scroll_vel *= std::exp(-7.0f * io.DeltaTime);
+    } else if (m_touch_scroll_window == win_id) {
+        m_touch_scroll_vel = 0.0f;
+    }
+}
+#endif
+
 void Gui::refresh_dir_picker_entries()
 {
     namespace fs = std::filesystem;
 
-    m_dir_picker_subdirs.clear();
+    m_dir_picker_entries.clear();
     m_dir_picker_unreadable = false;
 
+    std::vector<std::string> dirs;
+    std::vector<std::string> files;
     try {
         std::error_code ec;
-        fs::directory_iterator it(m_dir_picker_path, ec);
+        fs::directory_iterator it(
+            m_dir_picker_path, fs::directory_options::skip_permission_denied, ec);
         if (ec) {
             m_dir_picker_unreadable = true;
             return;
         }
+        const bool want_rom = m_dir_picker_target == DirPickerTarget::Model1RomDir
+                           || m_dir_picker_target == DirPickerTarget::Model2RomDir
+                           || m_dir_picker_target == DirPickerTarget::Model3RomDir;
+        const bool want_img = m_dir_picker_target == DirPickerTarget::Model1ArtworkDir
+                           || m_dir_picker_target == DirPickerTarget::Model2ArtworkDir
+                           || m_dir_picker_target == DirPickerTarget::Model3ArtworkDir
+                           || m_dir_picker_target == DirPickerTarget::Model1BezelDir
+                           || m_dir_picker_target == DirPickerTarget::Model2BezelDir
+                           || m_dir_picker_target == DirPickerTarget::Model3BezelDir;
         for (const auto& entry : it) {
-            std::error_code is_dir_ec;
-            if (entry.is_directory(is_dir_ec) && !is_dir_ec) {
-                m_dir_picker_subdirs.push_back(entry.path().filename().string());
+            std::error_code kind_ec;
+            if (entry.is_directory(kind_ec) && !kind_ec) {
+                dirs.push_back(entry.path().filename().string());
+            } else if ((want_rom || want_img) && entry.is_regular_file(kind_ec) && !kind_ec) {
+                std::string ext = entry.path().extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                const bool match_rom = want_rom && (ext == ".zip" || ext == ".7z");
+                const bool match_img = want_img
+                                    && (ext == ".png" || ext == ".jpg" || ext == ".jpeg"
+                                        || ext == ".bmp" || ext == ".tga");
+                if (match_rom || match_img) {
+                    files.push_back(entry.path().filename().string());
+                }
             }
         }
     } catch (const fs::filesystem_error&) {
         m_dir_picker_unreadable = true;
-        m_dir_picker_subdirs.clear();
+        return;
     }
 
-    std::sort(m_dir_picker_subdirs.begin(), m_dir_picker_subdirs.end(),
-              [](const std::string& a, const std::string& b) {
-                  return std::lexicographical_compare(
-                      a.begin(), a.end(), b.begin(), b.end(),
-                      [](unsigned char ca, unsigned char cb) {
-                          return std::tolower(ca) < std::tolower(cb);
-                      });
-              });
+    auto ci_less = [](const std::string& a, const std::string& b) {
+        return std::lexicographical_compare(
+            a.begin(), a.end(), b.begin(), b.end(),
+            [](unsigned char ca, unsigned char cb) {
+                return std::tolower(ca) < std::tolower(cb);
+            });
+    };
+    std::sort(dirs.begin(), dirs.end(), ci_less);
+    std::sort(files.begin(), files.end(), ci_less);
+
+    for (std::string& d : dirs) {
+        m_dir_picker_entries.push_back({std::move(d), true});
+    }
+    for (std::string& f : files) {
+        m_dir_picker_entries.push_back({std::move(f), false});
+    }
 }
 
 void Gui::draw_dir_picker_popup(Config& config)
@@ -4274,9 +4687,18 @@ void Gui::draw_dir_picker_popup(Config& config)
         ImGui::OpenPopup(tr_id("Choose Directory"));
     }
 
-    ImGui::SetNextWindowSize(ImVec2(520, 420), ImGuiCond_Appearing);
-    if (!ImGui::BeginPopupModal(tr_id("Choose Directory"), nullptr,
-                                ImGuiWindowFlags_NoSavedSettings)) {
+    const float  s = m_ui_scale > 0.0f ? m_ui_scale : 1.0f;
+#if defined(__ANDROID__)
+    const ImVec2 disp = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowSize(ImVec2(disp.x * 0.92f, disp.y * 0.88f), ImGuiCond_Appearing);
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    const ImGuiWindowFlags popup_flags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove;
+#else
+    ImGui::SetNextWindowSize(ImVec2(520.0f, 420.0f), ImGuiCond_Appearing);
+    const ImGuiWindowFlags popup_flags = ImGuiWindowFlags_NoSavedSettings;
+#endif
+    if (!ImGui::BeginPopupModal(tr_id("Choose Directory"), nullptr, popup_flags)) {
         return;
     }
 
@@ -4290,7 +4712,7 @@ void Gui::draw_dir_picker_popup(Config& config)
     }
 
     const fs::path current(m_dir_picker_path);
-    const fs::path parent = current.parent_path();
+    const fs::path parent     = current.parent_path();
     const bool     has_parent = !parent.empty() && parent != current;
     if (!has_parent) {
         ImGui::BeginDisabled();
@@ -4306,21 +4728,114 @@ void Gui::draw_dir_picker_popup(Config& config)
     if (ImGui::Button(tr_id("Refresh"))) {
         refresh_dir_picker_entries();
     }
+#if defined(__ANDROID__)
+    ImGui::SameLine();
+    if (ImGui::Button(tr_id("App folder"))) {
+        std::string p = android_external_root_dir();
+        if (!p.empty()) {
+            p += "/roms";
+            std::error_code mk_ec;
+            fs::create_directories(p, mk_ec);
+            m_dir_picker_path = std::move(p);
+            refresh_dir_picker_entries();
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(tr_id("Storage"))) {
+        std::string p = android_shared_storage_dir();
+        if (!p.empty()) {
+            m_dir_picker_path = std::move(p);
+            refresh_dir_picker_entries();
+        }
+    }
+    if (!android_has_storage_access()) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.96f, 0.72f, 0.35f, 1.0f), "%s",
+                           tr("Files access is disabled. Grant 'All files access' so Keisho can read shared .zip ROMs."));
+        if (ImGui::Button(tr_id("Grant files access"))) {
+            android_request_storage_access();
+        }
+    }
+#endif
 
+    const bool is_rom_picker = m_dir_picker_target == DirPickerTarget::Model1RomDir
+                            || m_dir_picker_target == DirPickerTarget::Model2RomDir
+                            || m_dir_picker_target == DirPickerTarget::Model3RomDir;
+    const bool is_cover_picker = m_dir_picker_target == DirPickerTarget::Model1ArtworkDir
+                              || m_dir_picker_target == DirPickerTarget::Model2ArtworkDir
+                              || m_dir_picker_target == DirPickerTarget::Model3ArtworkDir;
+    const bool is_bezel_picker = m_dir_picker_target == DirPickerTarget::Model1BezelDir
+                              || m_dir_picker_target == DirPickerTarget::Model2BezelDir
+                              || m_dir_picker_target == DirPickerTarget::Model3BezelDir;
+    const bool is_img_picker   = is_cover_picker || is_bezel_picker;
     ImGui::Separator();
-
-    if (m_dir_picker_unreadable) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s",
-                           tr("Cannot list this directory (permission denied, or it "
-                              "doesn't exist)."));
+    if (is_rom_picker) {
+        ImGui::TextDisabled("%s", tr("Tap a folder to open, or tap a .zip/.7z file to launch it directly."));
+    } else if (is_cover_picker) {
+        ImGui::TextDisabled("%s", tr("Open the covers folder and tap 'Select This Folder'. Images must match the ROM file name (e.g. daytona.png)."));
+    } else if (is_bezel_picker) {
+        ImGui::TextDisabled("%s", tr("Open the bezels folder (e.g. bezel_day) and tap 'Select This Folder'. Images use <game>.png or default.png."));
     }
 
+    if (m_dir_picker_unreadable) {
+        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s",
+                           tr("Cannot list this directory (permission denied, or it doesn't exist)."));
+    }
+
+    const float row_h = ImGui::GetTextLineHeight() + 14.0f * s * 0.45f;
     if (ImGui::BeginChild("##dirlist",
-                          ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 2), true)) {
-        for (const auto& name : m_dir_picker_subdirs) {
-            if (ImGui::Selectable(name.c_str())) {
-                m_dir_picker_path = (current / name).string();
-                refresh_dir_picker_entries();
+                          ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 1.45f), true)) {
+#if defined(__ANDROID__)
+        touch_drag_scroll(false);
+        const bool suppress   = m_touch_scrolling;
+#else
+        constexpr bool suppress = false;
+#endif
+        const int  parent_off = has_parent ? 1 : 0;
+        const int  total_rows = parent_off + static_cast<int>(m_dir_picker_entries.size());
+        ImGuiListClipper clipper;
+        clipper.Begin(total_rows);
+        while (clipper.Step()) {
+            for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+                ImGui::PushID(row);
+                if (has_parent && row == 0) {
+                    const std::string parent_lbl = std::string("[..]  ") + tr("Parent folder");
+                    if (ImGui::Selectable(parent_lbl.c_str(), false, 0, ImVec2(0.0f, row_h)) && !suppress) {
+                        m_dir_picker_path = parent.string();
+                        refresh_dir_picker_entries();
+                    }
+                    ImGui::PopID();
+                    continue;
+                }
+                const DirEntry&   entry = m_dir_picker_entries[static_cast<usize>(row - parent_off)];
+                const char*       tag   = entry.is_dir ? "[DIR]  " : (is_img_picker ? "[IMG]  " : "[ROM]  ");
+                const std::string label = std::string(tag) + entry.name;
+                if (!entry.is_dir) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, is_img_picker ? ImVec4(0.55f, 0.85f, 0.96f, 1.0f)
+                                                                       : ImVec4(0.96f, 0.78f, 0.42f, 1.0f));
+                }
+                const bool picked = ImGui::Selectable(label.c_str(), false, 0, ImVec2(0.0f, row_h)) && !suppress;
+                if (!entry.is_dir) {
+                    ImGui::PopStyleColor();
+                }
+                if (picked) {
+                    if (entry.is_dir) {
+                        m_dir_picker_path = (current / entry.name).string();
+                        refresh_dir_picker_entries();
+                    } else if (is_rom_picker) {
+                        switch (m_dir_picker_target) {
+                            case DirPickerTarget::Model1RomDir: config.model1_rom_dir = current.string(); break;
+                            case DirPickerTarget::Model2RomDir: config.model2_rom_dir = current.string(); break;
+                            case DirPickerTarget::Model3RomDir: config.model3_rom_dir = current.string(); break;
+                            default: break;
+                        }
+                        m_rescan_requested  = true;
+                        m_pending_launch    = (current / entry.name).string();
+                        m_dir_picker_target = DirPickerTarget::None;
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+                ImGui::PopID();
             }
         }
     }
@@ -4333,13 +4848,37 @@ void Gui::draw_dir_picker_popup(Config& config)
     }
     if (ImGui::Button(tr_id("Select This Folder"))) {
         switch (m_dir_picker_target) {
-            case DirPickerTarget::Model2RomDir:  config.model2_rom_dir = m_dir_picker_path; break;
-            case DirPickerTarget::Model1RomDir:  config.model1_rom_dir = m_dir_picker_path; break;
-            case DirPickerTarget::Model3RomDir:  config.model3_rom_dir = m_dir_picker_path; break;
+            case DirPickerTarget::Model1RomDir:
+                config.model1_rom_dir = m_dir_picker_path;
+                m_rescan_requested    = true;
+                break;
+            case DirPickerTarget::Model2RomDir:
+                config.model2_rom_dir = m_dir_picker_path;
+                m_rescan_requested    = true;
+                break;
+            case DirPickerTarget::Model3RomDir:
+                config.model3_rom_dir = m_dir_picker_path;
+                m_rescan_requested    = true;
+                break;
+            case DirPickerTarget::Model1ArtworkDir:
+                config.model1_artwork_dir = m_dir_picker_path;
+                m_rescan_requested        = true;
+                break;
+            case DirPickerTarget::Model2ArtworkDir:
+                config.model2_artwork_dir = m_dir_picker_path;
+                m_rescan_requested        = true;
+                break;
+            case DirPickerTarget::Model3ArtworkDir:
+                config.model3_artwork_dir = m_dir_picker_path;
+                m_rescan_requested        = true;
+                break;
+            case DirPickerTarget::Model1BezelDir: config.model1_bezel_dir = m_dir_picker_path; break;
+            case DirPickerTarget::Model2BezelDir: config.model2_bezel_dir = m_dir_picker_path; break;
+            case DirPickerTarget::Model3BezelDir: config.model3_bezel_dir = m_dir_picker_path; break;
             case DirPickerTarget::NvramDir:      config.nvram_dir      = m_dir_picker_path; break;
             case DirPickerTarget::ScreenshotDir: config.screenshot_dir = m_dir_picker_path; break;
-            case DirPickerTarget::BezelDir: config.bezel_dir = m_dir_picker_path; break;
-            case DirPickerTarget::CrosshairDir: config.crosshair_dir = m_dir_picker_path; break;
+            case DirPickerTarget::BezelDir:      config.bezel_dir      = m_dir_picker_path; break;
+            case DirPickerTarget::CrosshairDir:  config.crosshair_dir  = m_dir_picker_path; break;
             case DirPickerTarget::None: break;
         }
         m_dir_picker_target = DirPickerTarget::None;
@@ -4347,6 +4886,28 @@ void Gui::draw_dir_picker_popup(Config& config)
     }
     if (!valid) {
         ImGui::EndDisabled();
+    }
+    if (is_rom_picker || is_img_picker) {
+        ImGui::SameLine();
+        if (ImGui::Button(tr_id("Clear"))) {
+            switch (m_dir_picker_target) {
+                case DirPickerTarget::Model1RomDir:     config.model1_rom_dir.clear();     break;
+                case DirPickerTarget::Model2RomDir:     config.model2_rom_dir.clear();     break;
+                case DirPickerTarget::Model3RomDir:     config.model3_rom_dir.clear();     break;
+                case DirPickerTarget::Model1ArtworkDir: config.model1_artwork_dir.clear(); break;
+                case DirPickerTarget::Model2ArtworkDir: config.model2_artwork_dir.clear(); break;
+                case DirPickerTarget::Model3ArtworkDir: config.model3_artwork_dir.clear(); break;
+                case DirPickerTarget::Model1BezelDir:   config.model1_bezel_dir.clear();   break;
+                case DirPickerTarget::Model2BezelDir:   config.model2_bezel_dir.clear();   break;
+                case DirPickerTarget::Model3BezelDir:   config.model3_bezel_dir.clear();   break;
+                default: break;
+            }
+            if (is_rom_picker || is_cover_picker) {
+                m_rescan_requested = true;
+            }
+            m_dir_picker_target = DirPickerTarget::None;
+            ImGui::CloseCurrentPopup();
+        }
     }
     ImGui::SameLine();
     if (ImGui::Button(tr_id("Cancel"))) {
@@ -4429,6 +4990,437 @@ std::optional<std::string> Gui::take_pending_launch()
     return out;
 }
 
+bool Gui::take_return_to_picker_request()
+{
+    const bool out             = m_pending_return_to_picker;
+    m_pending_return_to_picker = false;
+    return out;
+}
+
+bool Gui::take_rescan_request()
+{
+    const bool out     = m_rescan_requested;
+    m_rescan_requested = false;
+    return out;
+}
+
+bool Gui::take_quit_request()
+{
+    const bool out   = m_quit_requested;
+    m_quit_requested = false;
+    return out;
+}
+
+#if defined(__ANDROID__)
+void Gui::draw_mobile_topbar(const ui::Palette& p, ui::Kit& kit, const Config& config,
+                             ImVec2 at, float width, bool in_picker, float* out_height)
+{
+    ImDrawList* list = ImGui::GetWindowDrawList();
+    ImFont*     font = ImGui::GetFont();
+    const float fsz  = ImGui::GetFontSize();
+    const float small_fs = kit.small();
+
+    // Renderer label: show the actually active backend so the badge never
+    // disagrees with what was initialised (e.g. OpenGL ES fallback or default).
+    std::string backend = m_active_renderer;
+    if (backend.empty()) {
+        backend = config.graphics_backend;
+    }
+    if (backend.empty() && !m_available_renderers.empty()) {
+        backend = m_available_renderers.front();
+    }
+    std::transform(backend.begin(), backend.end(), backend.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    if (backend == "OPENGL") backend = "GLES";
+    if (backend.empty()) backend = "GLES";
+
+    const float bar_h = kit.px(32.0f);
+    list->AddRectFilled(at, ImVec2(at.x + width, at.y + bar_h), p.panel, kit.px(8.0f));
+    list->AddRect(at, ImVec2(at.x + width, at.y + bar_h), p.edge, kit.px(8.0f), 0, kit.stroke());
+
+    // Brand + backend + ROM count on left
+    const float lx = at.x + kit.px(12.0f);
+    const std::string brand = "Keisho";
+    const std::string tag   = " · " + backend;
+    const float brand_sz    = std::round(fsz * 1.05f);
+    list->AddText(font, brand_sz, ImVec2(lx, at.y + kit.px(4.0f)), p.accent, brand.c_str());
+    const float brand_w = font->CalcTextSizeA(brand_sz, FLT_MAX, 0.0f, brand.c_str()).x;
+    list->AddText(font, small_fs, ImVec2(lx + brand_w, at.y + kit.px(5.0f)), p.muted, tag.c_str());
+    const std::string count = i18n::trnf("%zu ROM", "%zu ROMs",
+                                         static_cast<unsigned long>(m_picker_entries.size()),
+                                         m_picker_entries.size());
+    list->AddText(font, small_fs * 0.85f, ImVec2(lx, at.y + kit.px(17.5f)), p.muted, count.c_str());
+
+    // Pill tabs: Games | Video | Input | Audio | System (hide Games when launched from a frontend)
+    struct MobileTab {
+        const char* label;
+        int         page;  // -1 = Games picker
+    };
+    const std::array<MobileTab, 5> all_tabs = {{
+        {tr("Games"),  -1},
+        {tr("Video"),  kPageDisplay},
+        {tr("Input"),  kPageInput},
+        {tr("Audio"),  kPageAudio},
+        {tr("System"), kPageSystem},
+    }};
+    const bool   show_games_tab = in_picker || m_picker_can_return;
+    const size_t first_tab      = show_games_tab ? 0 : 1;
+    const size_t tab_count      = all_tabs.size() - first_tab;
+    const float  pad_x          = kit.px(11.0f);
+    const float  gap            = kit.px(6.0f);
+    const float  pill_h         = kit.px(22.0f);
+    std::array<float, 5> widths{};
+    float total_tabs_w = 0.0f;
+    for (size_t i = first_tab; i < all_tabs.size(); ++i) {
+        widths[i] = ImGui::CalcTextSize(all_tabs[i].label).x + pad_x * 2.0f;
+        total_tabs_w += widths[i];
+        if (i + 1 < all_tabs.size()) total_tabs_w += gap;
+    }
+
+    const float tag_w      = font->CalcTextSizeA(small_fs, FLT_MAX, 0.0f, tag.c_str()).x;
+    const float left_end   = lx + brand_w + tag_w + kit.px(10.0f);
+    const float avail_tabs = std::max(0.0f, (at.x + width - kit.px(8.0f)) - left_end);
+    float       tab_pad    = pad_x;
+    float       tab_gap    = gap;
+    if (total_tabs_w > avail_tabs && total_tabs_w > 0.0f) {
+        const float text_sum = total_tabs_w - pad_x * 2.0f * static_cast<float>(tab_count)
+                             - gap * static_cast<float>(tab_count > 0 ? tab_count - 1 : 0);
+        const float extra    = std::max(0.0f, avail_tabs - text_sum);
+        tab_pad              = std::max(kit.px(4.0f), extra * 0.375f / static_cast<float>(tab_count));
+        tab_gap              = std::max(kit.px(3.0f), extra * 0.25f / static_cast<float>(tab_count > 1 ? tab_count - 1 : 1));
+        total_tabs_w         = text_sum + tab_pad * 2.0f * static_cast<float>(tab_count)
+                             + tab_gap * static_cast<float>(tab_count > 1 ? tab_count - 1 : 0);
+    }
+    for (size_t i = first_tab; i < all_tabs.size(); ++i) {
+        widths[i] = ImGui::CalcTextSize(all_tabs[i].label).x + tab_pad * 2.0f;
+    }
+    float tx = std::max(left_end, at.x + width - kit.px(10.0f) - total_tabs_w);
+    const float ty = at.y + (bar_h - pill_h) * 0.5f;
+
+    for (size_t i = first_tab; i < all_tabs.size(); ++i) {
+        const bool active = in_picker ? (all_tabs[i].page == -1) : (m_page == all_tabs[i].page);
+        const ImVec2 p0(tx, ty);
+        const ImVec2 p1(tx + widths[i], ty + pill_h);
+        ImGui::PushID(static_cast<int>(i) + 9100);
+        ImGui::SetCursorScreenPos(p0);
+        const bool clicked = ImGui::InvisibleButton("##mtab", ImVec2(widths[i], pill_h));
+        const bool hovered = ImGui::IsItemHovered();
+        ImGui::PopID();
+
+        const ImU32 fill = active ? p.text : (hovered ? ui::mix(p.card, p.text, 0.10f) : p.card);
+        const ImU32 ink  = active ? p.backdrop : p.text;
+        list->AddRectFilled(p0, p1, fill, pill_h * 0.5f);
+        if (!active) {
+            list->AddRect(p0, p1, p.edge, pill_h * 0.5f, 0, kit.stroke());
+        }
+        const ImVec2 ts = ImGui::CalcTextSize(all_tabs[i].label);
+        list->AddText(ImVec2(std::floor(p0.x + (widths[i] - ts.x) * 0.5f),
+                             std::floor(p0.y + (pill_h - ts.y) * 0.5f)),
+                      ink, all_tabs[i].label);
+
+        if (clicked) {
+            if (all_tabs[i].page == -1) {
+                if (!m_current_game.empty() && m_picker_can_return) {
+                    m_pending_return_to_picker = true;
+                }
+                m_visible = false;
+            } else {
+                m_page            = all_tabs[i].page;
+                m_visible         = true;
+                m_nav.focused_row = -1;
+            }
+        }
+        tx += widths[i] + tab_gap;
+    }
+
+    if (out_height != nullptr) {
+        *out_height = bar_h;
+    }
+}
+
+void Gui::draw_mobile_bottombar(const ui::Palette& p, ui::Kit& kit, Config& config,
+                                ImVec2 at, float width, bool in_picker, float* out_top)
+{
+    static_cast<void>(config);
+    ImDrawList* list = ImGui::GetWindowDrawList();
+    const float bar_h = kit.px(32.0f);
+    if (out_top != nullptr) {
+        *out_top = at.y;
+    }
+    const float btn_h = kit.px(25.0f);
+    const float by    = at.y + (bar_h - btn_h) * 0.5f;
+    const float pad_x = kit.px(12.0f);
+    const float gap   = kit.px(7.0f);
+
+    const auto draw_pill = [&](int id, float x, const char* label, ui::Kit::Tone tone,
+                               bool enabled, float* next_x) -> bool {
+        const float bw = ImGui::CalcTextSize(label).x + pad_x * 2.0f;
+        const ImVec2 p0(x, by);
+        const ImVec2 p1(x + bw, by + btn_h);
+        ImGui::PushID(id);
+        ImGui::SetCursorScreenPos(p0);
+        if (!enabled) ImGui::BeginDisabled();
+        const bool clicked = ImGui::InvisibleButton("##mbot", ImVec2(bw, btn_h));
+        if (!enabled) ImGui::EndDisabled();
+        const bool hovered = enabled && ImGui::IsItemHovered();
+        const bool held    = enabled && ImGui::IsItemActive();
+        ImGui::PopID();
+
+        ImU32 fill = p.card;
+        ImU32 edge = p.edge;
+        ImU32 ink  = p.text;
+        if (tone == ui::Kit::Tone::Primary) {
+            fill = p.active;
+            edge = ui::with_alpha(p.active, 0.0f);
+            ink  = p.on_active;
+        } else if (tone == ui::Kit::Tone::Danger) {
+            fill = ui::with_alpha(p.bad, 0.85f);
+            edge = p.bad;
+            ink  = IM_COL32(255, 250, 250, 255);
+        }
+        if (!enabled) {
+            fill = ui::with_alpha(fill, 0.40f);
+            edge = ui::with_alpha(edge, 0.40f);
+            ink  = p.muted;
+        } else if (held) {
+            fill = ui::mix(fill, p.text, 0.16f);
+        } else if (hovered) {
+            fill = ui::mix(fill, p.text, 0.08f);
+        }
+        list->AddRectFilled(p0, p1, fill, btn_h * 0.5f);
+        if ((edge >> IM_COL32_A_SHIFT) != 0) {
+            list->AddRect(p0, p1, edge, btn_h * 0.5f, 0, kit.stroke());
+        }
+        const ImVec2 ts = ImGui::CalcTextSize(label);
+        list->AddText(ImVec2(std::floor(p0.x + (bw - ts.x) * 0.5f),
+                             std::floor(p0.y + (btn_h - ts.y) * 0.5f)),
+                      ink, label);
+        if (next_x != nullptr) *next_x = x + bw + gap;
+        return clicked && enabled;
+    };
+
+    float x = at.x + kit.px(4.0f);
+    const bool has_running = !m_current_game.empty();
+    const bool can_play    = has_running || (!m_picker_entries.empty()
+                             && m_picker_selected >= 0
+                             && m_picker_selected < static_cast<int>(m_picker_entries.size()));
+    const char* play_lbl   = (has_running && !in_picker) ? tr("Resume") : tr("Play");
+    if (draw_pill(9201, x, play_lbl, ui::Kit::Tone::Primary, can_play || m_picker_entries.empty(), &x)) {
+        if (has_running && !in_picker) {
+            m_visible = false;
+        } else if (m_picker_entries.empty()) {
+            m_rom_folders_modal_open = true;
+        } else if (m_picker_selected >= 0 && m_picker_selected < static_cast<int>(m_picker_entries.size())) {
+            m_visible        = false;
+            m_pending_launch = m_picker_entries[static_cast<usize>(m_picker_selected)].name;
+        }
+    }
+
+    if (draw_pill(9202, x, tr("Saves"), ui::Kit::Tone::Plain, true, &x)) {
+        m_saves_modal_open = true;
+    }
+
+    if (in_picker || m_picker_can_return) {
+        if (draw_pill(9203, x, tr("Folders"), ui::Kit::Tone::Plain, true, &x)) {
+            m_rom_folders_modal_open = true;
+        }
+
+        if (draw_pill(9204, x, m_picker_find_open && in_picker ? tr("Scan") : tr("Find"), ui::Kit::Tone::Plain, true, &x)) {
+            if (m_picker_find_open && in_picker) {
+                m_rescan_requested = true;
+            } else {
+                m_picker_find_open    = !m_picker_find_open;
+                m_picker_focus_search = m_picker_find_open;
+                if (!in_picker) {
+                    if (!m_current_game.empty() && m_picker_can_return) {
+                        m_pending_return_to_picker = true;
+                    }
+                    m_visible          = false;
+                    m_picker_find_open = true;
+                }
+            }
+        }
+    }
+
+    const char* quit_lbl = (has_running && !in_picker && m_picker_can_return) ? tr("Exit") : tr("Quit");
+    const float quit_w   = ImGui::CalcTextSize(quit_lbl).x + pad_x * 2.0f;
+    float dummy_nx       = 0.0f;
+    if (draw_pill(9205, at.x + width - kit.px(4.0f) - quit_w, quit_lbl, ui::Kit::Tone::Danger, true, &dummy_nx)) {
+        if (has_running && !in_picker && m_picker_can_return) {
+            m_pending_return_to_picker = true;
+            m_visible                  = false;
+        } else {
+            m_quit_requested = true;
+        }
+    }
+}
+
+void Gui::draw_saves_modal(const ui::Palette& p, Config& config)
+{
+    static_cast<void>(p);
+    static_cast<void>(config);
+    const char* id = "###saves_modal";
+    ImGui::OpenPopup(id);
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const float          s  = m_ui_scale > 0.0f ? m_ui_scale : 1.0f;
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x * 0.86f, vp->WorkSize.y * 0.82f), ImGuiCond_Always);
+    const std::string title = std::string(tr("Saves")) + id;
+    if (!ImGui::BeginPopupModal(title.c_str(), &m_saves_modal_open,
+                                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove)) {
+        return;
+    }
+
+    if (!m_state_game_loaded) {
+        ImGui::TextWrapped("%s", tr("Launch a game first to save or load states into quick and numbered slots."));
+    } else {
+        ImGui::Text("%s: %s", tr("Game"), m_current_game.c_str());
+        ImGui::Separator();
+        if (ImGui::BeginChild("##saves_list", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 1.5f), true)) {
+            touch_drag_scroll(false);
+            const float pad_y = 6.0f * s * 0.35f;
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f * s * 0.35f, pad_y));
+            for (const StateSlot& slot : m_state_slots) {
+                ImGui::PushID(slot.slot.c_str());
+                ImGui::TextUnformatted(slot.label.c_str());
+                ImGui::SameLine();
+                if (!slot.occupied) {
+                    ImGui::TextDisabled("%s", tr("empty"));
+                } else {
+                    ImGui::TextDisabled("%s", slot.timestamp.c_str());
+                }
+                if (ImGui::Button(tr_id("Save"))) {
+                    m_pending_state_request = StateRequest{StateRequest::Action::Save, slot.slot};
+                    m_saves_modal_open      = false;
+                }
+                ImGui::SameLine();
+                if (!slot.occupied) ImGui::BeginDisabled();
+                if (ImGui::Button(tr_id("Load"))) {
+                    m_pending_state_request = StateRequest{StateRequest::Action::Load, slot.slot};
+                    m_saves_modal_open      = false;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button(tr_id("Delete"))) {
+                    m_pending_state_request = StateRequest{StateRequest::Action::Delete, slot.slot};
+                }
+                if (!slot.occupied) ImGui::EndDisabled();
+                ImGui::Separator();
+                ImGui::PopID();
+            }
+            ImGui::PopStyleVar();
+        }
+        ImGui::EndChild();
+    }
+
+    if (ImGui::Button(tr_id("Close"))) {
+        m_saves_modal_open = false;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+void Gui::draw_rom_folders_modal(const ui::Palette& p, Config& config)
+{
+    const char* id = "###rom_folders_modal";
+    ImGui::OpenPopup(id);
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const float          s  = m_ui_scale > 0.0f ? m_ui_scale : 1.0f;
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x * 0.90f, vp->WorkSize.y * 0.86f), ImGuiCond_Always);
+    const std::string title = std::string(tr("Model Folders")) + id;
+    if (!ImGui::BeginPopupModal(title.c_str(), &m_rom_folders_modal_open,
+                                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove)) {
+        return;
+    }
+
+    ImGui::TextWrapped("%s", tr("Set ROMs, covers and bezels folders independently for each model. Cover files must match the ROM name."));
+    ImGui::Separator();
+
+    const float pad_y = 6.0f * s * 0.35f;
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f * s * 0.35f, pad_y));
+    if (ImGui::BeginChild("##folders_scroll", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 1.4f), false)) {
+        touch_drag_scroll(false);
+        const bool suppress = m_touch_scrolling;
+        const auto folder_row = [&](const char* label, std::string& dir, DirPickerTarget target,
+                                    const std::string& initial_override = {}, bool rescan_on_clear = true) {
+            ImGui::PushID(label);
+            ImGui::TextUnformatted(label);
+            ImGui::SameLine();
+            if (dir.empty()) {
+                ImGui::TextDisabled("%s", tr("not set"));
+            } else {
+                ImGui::TextWrapped("%s", dir.c_str());
+            }
+            if (ImGui::Button(tr_id("Browse...")) && !suppress) {
+                m_rom_folders_modal_open = false;
+                ImGui::CloseCurrentPopup();
+                open_dir_picker(target, initial_override.empty() ? dir : initial_override);
+            }
+            if (!dir.empty()) {
+                ImGui::SameLine();
+                if (ImGui::Button(tr_id("Clear")) && !suppress) {
+                    dir.clear();
+                    if (rescan_on_clear) {
+                        m_rescan_requested = true;
+                    }
+                }
+            }
+            ImGui::Separator();
+            ImGui::PopID();
+        };
+
+        const auto system_header = [&](const char* sys_name) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(p.accent), "%s", sys_name);
+        };
+
+#if SM2_HAVE_MODEL1
+        system_header("Model 1");
+        folder_row(tr("Model 1 ROM folder"), config.model1_rom_dir, DirPickerTarget::Model1RomDir);
+        folder_row(tr("Model 1 covers folder"), config.model1_artwork_dir, DirPickerTarget::Model1ArtworkDir,
+                   suggested_cover_start(config.model1_artwork_dir, config.model1_rom_dir));
+        folder_row(tr("Model 1 bezels folder"), config.model1_bezel_dir, DirPickerTarget::Model1BezelDir,
+                   suggested_bezel_start(config.model1_bezel_dir, config.model1_rom_dir), false);
+#endif
+        system_header("Model 2");
+        folder_row(tr("Model 2 ROM folder"), config.model2_rom_dir, DirPickerTarget::Model2RomDir);
+        folder_row(tr("Model 2 covers folder"), config.model2_artwork_dir, DirPickerTarget::Model2ArtworkDir,
+                   suggested_cover_start(config.model2_artwork_dir, config.model2_rom_dir));
+        folder_row(tr("Model 2 bezels folder"), config.model2_bezel_dir, DirPickerTarget::Model2BezelDir,
+                   suggested_bezel_start(config.model2_bezel_dir, config.model2_rom_dir), false);
+#if SM2_HAVE_MODEL3
+        system_header("Model 3");
+        folder_row(tr("Model 3 ROM folder"), config.model3_rom_dir, DirPickerTarget::Model3RomDir);
+        folder_row(tr("Model 3 covers folder"), config.model3_artwork_dir, DirPickerTarget::Model3ArtworkDir,
+                   suggested_cover_start(config.model3_artwork_dir, config.model3_rom_dir));
+        folder_row(tr("Model 3 bezels folder"), config.model3_bezel_dir, DirPickerTarget::Model3BezelDir,
+                   suggested_bezel_start(config.model3_bezel_dir, config.model3_rom_dir), false);
+#endif
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+
+    if (ImGui::Button(tr_id("Close"))) {
+        m_rom_folders_modal_open = false;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+#endif
+
+const Gui::GameFamily* Gui::current_family_info() const
+{
+    if (m_current_family.empty()) {
+        return nullptr;
+    }
+    for (const GameFamily& f : m_families) {
+        if (f.key == m_current_family) {
+            return &f;
+        }
+    }
+    return nullptr;
+}
+
 void Gui::release_picker_textures()
 {
     if (m_picker_backend == nullptr) {
@@ -4462,7 +5454,7 @@ void Gui::poll_scraper_and_load_metadata()
             entry.manufacturer    = meta.manufacturer;
             entry.description     = meta.description;
             entry.metadata_loaded = true;
-            if (!meta.image_paths.empty()) {
+            if (entry.local_art_paths.empty() && !meta.image_paths.empty()) {
                 entry.art_state = PickerEntry::Art::Unknown;  // let the grid upload it
             }
             break;
@@ -4484,6 +5476,56 @@ namespace {
     pixels->assign(data, data + static_cast<usize>(*w) * static_cast<usize>(*h) * 4);
     stbi_image_free(data);
     return true;
+}
+
+void load_entry_art(Gui::PickerEntry& entry, render::Backend* backend, Scraper* scraper)
+{
+    if (backend == nullptr) {
+        entry.art_state = Gui::PickerEntry::Art::None;
+        return;
+    }
+    const auto upload = [&](const std::string& image_path) {
+        int                        iw = 0;
+        int                        ih = 0;
+        std::vector<unsigned char> rgba;
+        if (decode_image_rgba(image_path, &iw, &ih, &rgba) && iw > 0 && ih > 0) {
+            const render::Backend::TextureHandle handle =
+                backend->create_texture(static_cast<u32>(iw), static_cast<u32>(ih), rgba.data());
+            if (handle != 0) {
+                entry.art.push_back({handle, static_cast<float>(iw), static_cast<float>(ih)});
+            }
+        }
+    };
+    for (const std::string& image_path : entry.local_art_paths) {
+        upload(image_path);
+    }
+    if (entry.art.empty() && scraper != nullptr) {
+        const Scraper::Metadata meta = scraper->load_metadata(entry.name, entry.title);
+        for (const std::string& image_path : meta.image_paths) {
+            upload(image_path);
+        }
+    }
+    entry.art_state = entry.art.empty() ? Gui::PickerEntry::Art::None : Gui::PickerEntry::Art::Loaded;
+}
+
+void draw_entry_art(ImDrawList* draw_list, const Gui::PickerEntry& entry, render::Backend* backend,
+                    bool is_sel, int art_index, const ImVec2& a0, const ImVec2& a1, float rounding)
+{
+    int img = 0;
+    if (is_sel && entry.art.size() > 1) {
+        img = art_index % static_cast<int>(entry.art.size());
+    }
+    const Gui::PickerEntry::Art1& art = entry.art[static_cast<usize>(img)];
+    ImVec2 d0 = a0, d1 = a1;
+    if (art.w > 0.0f && art.h > 0.0f) {
+        const float aw = a1.x - a0.x, ah = a1.y - a0.y;
+        const float k  = std::min(aw / art.w, ah / art.h);
+        const float dw = std::floor(art.w * k), dh = std::floor(art.h * k);
+        d0 = ImVec2(std::floor(a0.x + (aw - dw) * 0.5f), std::floor(a0.y + (ah - dh) * 0.5f));
+        d1 = ImVec2(d0.x + dw, d0.y + dh);
+    }
+    draw_list->AddImageRounded(reinterpret_cast<ImTextureID>(backend->texture_imgui_id(art.handle)), d0, d1,
+                               ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f), IM_COL32_WHITE, rounding);
 }
 
 }  // namespace
@@ -4516,22 +5558,27 @@ void Gui::draw_picker(Config& config)
         return;
     }
     ImDrawList*  list   = ImGui::GetWindowDrawList();
-    const ImVec2 origin = viewport->WorkPos;
-    const ImVec2 room   = viewport->WorkSize;
-    const float  margin = kit.px(18.0f);
+    ImVec2 origin, room;
+    safe_work_rect(m_window, viewport, &origin, &room);
     const float  font   = ImGui::GetFontSize();
     const ImGuiIO& io   = ImGui::GetIO();
 
     // -- the games shown: by system and by the search ------------------------
+#if SM2_HAVE_MODEL1 || SM2_HAVE_MODEL3
     static constexpr std::array<const char*, 4> kSystems = {N_("All"), "Model 1", "Model 2", "Model 3"};
     const std::array<const char*, 4>            systems  = tr_all(kSystems);
+#else
+    m_picker_system = 0;
+#endif
     std::string needle = m_picker_search;
     std::transform(needle.begin(), needle.end(), needle.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     std::vector<int> shown;  // indices into m_picker_entries, in the order drawn
     for (int i = 0; i < static_cast<int>(m_picker_entries.size()); ++i) {
         const PickerEntry& e = m_picker_entries[static_cast<usize>(i)];
+#if SM2_HAVE_MODEL1 || SM2_HAVE_MODEL3
         if (m_picker_system != 0 && e.system != kSystems[static_cast<usize>(m_picker_system)]) continue;
+#endif
         if (!needle.empty()) {
             std::string hay = e.title + " " + e.name;
             std::transform(hay.begin(), hay.end(), hay.begin(),
@@ -4541,7 +5588,11 @@ void Gui::draw_picker(Config& config)
         shown.push_back(i);
     }
     // Grouped by system when every system shows: Model 1, 2, 3, then titles.
+#if SM2_HAVE_MODEL1 || SM2_HAVE_MODEL3
     const bool grouped = m_picker_system == 0;
+#else
+    const bool grouped = false;
+#endif
     if (grouped) {
         std::stable_sort(shown.begin(), shown.end(), [&](int a, int b) {
             return m_picker_entries[static_cast<usize>(a)].system < m_picker_entries[static_cast<usize>(b)].system;
@@ -4549,6 +5600,367 @@ void Gui::draw_picker(Config& config)
     }
 
     // -- the head: the title, the systems, the search ------------------------
+#if defined(__ANDROID__)
+    const float top_origin = origin.y + kit.px(4.0f);
+    const float inner_x    = origin.x + kit.px(6.0f);
+    const float inner_w    = room.x - kit.px(12.0f);
+    float       top_h      = kit.px(30.0f);
+    draw_mobile_topbar(p, kit, config, ImVec2(inner_x, top_origin), inner_w, true, &top_h);
+    float cur_y = top_origin + top_h + kit.px(4.0f);
+
+#if SM2_HAVE_MODEL1 || SM2_HAVE_MODEL3
+    // System filter strip: All | Model 1 | Model 2 | Model 3
+    {
+        const float sys_h   = kit.px(20.0f);
+        const float sys_pad = kit.px(10.0f);
+        const float sys_gap = kit.px(6.0f);
+        float       sx      = inner_x;
+        for (int si = 0; si < 4; ++si) {
+            const float bw = ImGui::CalcTextSize(systems[static_cast<usize>(si)]).x + sys_pad * 2.0f;
+            const ImVec2 sp0(sx, cur_y);
+            const ImVec2 sp1(sx + bw, cur_y + sys_h);
+            ImGui::PushID(9300 + si);
+            ImGui::SetCursorScreenPos(sp0);
+            const bool clicked = ImGui::InvisibleButton("##msys", ImVec2(bw, sys_h));
+            const bool hovered = ImGui::IsItemHovered();
+            ImGui::PopID();
+            const bool  active = (m_picker_system == si);
+            const ImU32 fill   = active ? p.active : (hovered ? ui::mix(p.card, p.text, 0.10f) : p.card);
+            const ImU32 ink    = active ? p.on_active : p.text;
+            list->AddRectFilled(sp0, sp1, fill, sys_h * 0.5f);
+            if (!active) {
+                list->AddRect(sp0, sp1, p.edge, sys_h * 0.5f, 0, kit.stroke());
+            }
+            const ImVec2 ts = ImGui::CalcTextSize(systems[static_cast<usize>(si)]);
+            list->AddText(ImVec2(std::floor(sp0.x + (bw - ts.x) * 0.5f),
+                                 std::floor(sp0.y + (sys_h - ts.y) * 0.5f)),
+                          ink, systems[static_cast<usize>(si)]);
+            if (clicked) {
+                m_picker_system        = si;
+                m_picker_selected      = -1;
+                m_picker_scroll_to_sel = true;
+            }
+            sx += bw + sys_gap;
+        }
+        cur_y += sys_h + kit.px(3.0f);
+    }
+#endif
+
+    const float bot_h = kit.px(30.0f);
+    const float bot_y = origin.y + room.y - kit.px(4.0f) - bot_h;
+
+    // Optional Find bar toggled by bottom "Find" pill.
+    if (m_picker_find_open) {
+        const float fw = inner_w - kit.px(36.0f);
+        const float fh = kit.px(24.0f);
+        ImGui::SetCursorScreenPos(ImVec2(inner_x, cur_y));
+        ImGui::SetNextItemWidth(fw);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(kit.px(10.0f), std::max(2.0f, (fh - font) * 0.5f)));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, fh * 0.5f);
+        if (m_picker_focus_search) {
+            ImGui::SetKeyboardFocusHere();
+            m_picker_focus_search = false;
+        }
+        if (m_picker_drop_search) {
+            ImGui::ClearActiveID();
+            m_picker_drop_search = false;
+        }
+        if (ImGui::InputTextWithHint("##search_mob", tr("Search games..."), m_picker_search, sizeof m_picker_search)) {
+            m_picker_scroll_to_sel = true;
+        }
+        m_picker_searching = ImGui::IsItemActive();
+        ImGui::PopStyleVar(2);
+        const ImVec2 clr_at(inner_x + fw + kit.px(6.0f), cur_y);
+        if (kit.button_at("X", clr_at, ui::Kit::Tone::Plain)) {
+            m_picker_search[0]     = '\0';
+            m_picker_find_open     = false;
+            m_picker_scroll_to_sel = true;
+        }
+        cur_y += fh + kit.px(6.0f);
+    }
+
+    // Warn cleanly if reading shared storage without MANAGE_EXTERNAL_STORAGE.
+    const auto is_shared_dir = [](const std::string& d) {
+        return d.rfind("/storage/emulated/", 0) == 0;
+    };
+    const bool need_storage_perm = !android_has_storage_access()
+                                && (m_picker_entries.empty()
+                                    || is_shared_dir(config.model1_rom_dir)
+                                    || is_shared_dir(config.model2_rom_dir)
+                                    || is_shared_dir(config.model3_rom_dir));
+    if (need_storage_perm) {
+        const float warn_h = kit.px(26.0f);
+        const ImVec2 w0(inner_x, cur_y);
+        const ImVec2 w1(inner_x + inner_w, cur_y + warn_h);
+        list->AddRectFilled(w0, w1, ui::with_alpha(p.warn, 0.16f), kit.px(6.0f));
+        list->AddRect(w0, w1, ui::with_alpha(p.warn, 0.65f), kit.px(6.0f), 0, kit.stroke());
+        const char*  grant_lbl = tr("Grant files access");
+        const ImVec2 grant_sz  = kit.button_size(grant_lbl);
+        const ImVec2 grant_at(w1.x - kit.px(6.0f) - grant_sz.x, cur_y + (warn_h - grant_sz.y) * 0.5f);
+        if (kit.button_at(grant_lbl, grant_at, ui::Kit::Tone::Primary)) {
+            android_request_storage_access();
+        }
+        const float msg_w = std::max(0.0f, grant_at.x - w0.x - kit.px(16.0f));
+        const std::string msg = kit.fitted(
+            tr("Files access needed to read ROM .zip archives in shared folders."), msg_w);
+        list->AddText(ImGui::GetFont(), kit.small(),
+                      ImVec2(w0.x + kit.px(10.0f), cur_y + (warn_h - kit.small()) * 0.5f),
+                      p.warn, msg.c_str());
+        cur_y += warn_h + kit.px(6.0f);
+    }
+
+    const float body_bot = bot_y - kit.px(3.0f);
+    if (shown.empty()) {
+        const ImVec2 e0(inner_x, cur_y);
+        const ImVec2 e1(inner_x + inner_w, body_bot);
+        list->AddRectFilled(e0, e1, p.panel, kit.px(8.0f));
+        list->AddRect(e0, e1, p.edge, kit.px(8.0f), 0, kit.stroke());
+        const float pad = kit.px(16.0f);
+        const bool filtering_search = m_picker_search[0] != '\0';
+        const std::string active_dir = m_picker_system == 1 ? config.model1_rom_dir
+                                     : m_picker_system == 3 ? config.model3_rom_dir
+                                     : m_picker_system == 2 ? config.model2_rom_dir
+                                                            : std::string();
+        std::string empty_msg;
+        if (filtering_search) {
+            empty_msg = tr("No game matches.");
+        } else if (m_picker_system == 1) {
+            empty_msg = tr("No Model 1 ROMs found in the Model 1 folder.");
+        } else if (m_picker_system == 2) {
+            empty_msg = tr("No Model 2 ROMs found in the Model 2 folder.");
+        } else if (m_picker_system == 3) {
+            empty_msg = tr("No Model 3 ROMs found in the Model 3 folder.");
+        } else {
+            empty_msg = tr("No Model 1, 2 or 3 ROM archives were found. Select a ROM folder for each system.");
+        }
+        const float  wrap_w  = inner_w - pad * 2.0f;
+        const ImVec2 text_sz = ImGui::GetFont()->CalcTextSizeA(font, FLT_MAX, wrap_w, empty_msg.c_str());
+        list->AddText(ImGui::GetFont(), font, ImVec2(e0.x + pad, e0.y + pad), p.text, empty_msg.c_str(), nullptr, wrap_w);
+        float ny = e0.y + pad + text_sz.y + kit.px(8.0f);
+        if (!active_dir.empty()) {
+            const std::string dir_line = trf("Current ROM folder: %s", active_dir.c_str());
+            const ImVec2      dsz      = ImGui::GetFont()->CalcTextSizeA(kit.small(), FLT_MAX, wrap_w, dir_line.c_str());
+            list->AddText(ImGui::GetFont(), kit.small(), ImVec2(e0.x + pad, ny), p.muted, dir_line.c_str(), nullptr, wrap_w);
+            ny += dsz.y + kit.px(12.0f);
+        }
+        float bx = e0.x + pad;
+        if (m_picker_system == 1 || m_picker_system == 2 || m_picker_system == 3) {
+            const char* browse_lbl = tr("Browse ROMs / archives...");
+            if (kit.button_at(browse_lbl, ImVec2(bx, ny), ui::Kit::Tone::Primary)) {
+                const DirPickerTarget tgt = m_picker_system == 1 ? DirPickerTarget::Model1RomDir
+                                          : m_picker_system == 3 ? DirPickerTarget::Model3RomDir
+                                                                 : DirPickerTarget::Model2RomDir;
+                open_dir_picker(tgt, active_dir);
+            }
+            bx += kit.button_size(browse_lbl).x + kit.px(10.0f);
+        } else {
+            const char* folders_lbl = tr("ROM Folders");
+            if (kit.button_at(folders_lbl, ImVec2(bx, ny), ui::Kit::Tone::Primary)) {
+                m_rom_folders_modal_open = true;
+            }
+            bx += kit.button_size(folders_lbl).x + kit.px(10.0f);
+        }
+        if (kit.button_at(tr("Scan"), ImVec2(bx, ny), ui::Kit::Tone::Plain)) {
+            m_rescan_requested = true;
+        }
+        draw_mobile_bottombar(p, kit, config, ImVec2(inner_x, bot_y), inner_w, true, nullptr);
+        if (m_rom_folders_modal_open && m_dir_picker_target == DirPickerTarget::None && !m_dir_picker_request_open) {
+            draw_rom_folders_modal(p, config);
+        }
+        draw_dir_picker_popup(config);
+        m_popup_open = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        ImGui::End();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
+        return;
+    }
+
+    // Selection in shown list
+    int sel = -1;
+    for (usize i = 0; i < shown.size(); ++i) {
+        if (shown[i] == m_picker_selected) sel = static_cast<int>(i);
+    }
+    if (sel < 0) {
+        sel                    = 0;
+        m_picker_selected      = shown[0];
+        m_picker_scroll_to_sel = true;
+    }
+
+    constexpr float kArtDwellSeconds = 2.0f;
+    m_picker_art_timer += io.DeltaTime;
+    if (m_picker_art_timer >= kArtDwellSeconds) {
+        m_picker_art_timer = 0.0f;
+        ++m_picker_art_index;
+    }
+
+    // M2EA-style horizontal card carousel with < and > buttons and caption/dots.
+    const float info_h    = kit.small() + kit.px(5.0f);
+    const float cards_h   = std::max(kit.px(80.0f), body_bot - cur_y - info_h);
+    const float arrow_w   = kit.px(22.0f);
+    const float strip_x   = inner_x + arrow_w + kit.px(3.0f);
+    const float strip_w   = std::max(kit.px(100.0f), inner_w - (arrow_w + kit.px(3.0f)) * 2.0f);
+    const float card_h    = std::max(kit.px(72.0f), cards_h - kit.px(2.0f));
+    const float card_w    = std::floor(card_h * 0.78f);
+    const float card_gap  = kit.px(9.0f);
+    const float side_pad  = kit.px(8.0f);
+
+    // Left / Right arrows
+    const ImVec2 left_at(inner_x, cur_y + (cards_h - kit.px(36.0f)) * 0.5f);
+    ImGui::SetCursorScreenPos(left_at);
+    if (ImGui::InvisibleButton("##prev_game", ImVec2(arrow_w, kit.px(36.0f)))) {
+        sel                    = (sel - 1 + static_cast<int>(shown.size())) % static_cast<int>(shown.size());
+        m_picker_selected      = shown[static_cast<usize>(sel)];
+        m_picker_scroll_to_sel = true;
+    }
+    list->AddText(ImGui::GetFont(), font * 1.2f,
+                  ImVec2(left_at.x + arrow_w * 0.25f, left_at.y + (kit.px(36.0f) - font * 1.2f) * 0.5f),
+                  ImGui::IsItemHovered() ? p.text : p.muted, "<");
+
+    const ImVec2 right_at(inner_x + inner_w - arrow_w, left_at.y);
+    ImGui::SetCursorScreenPos(right_at);
+    if (ImGui::InvisibleButton("##next_game", ImVec2(arrow_w, kit.px(36.0f)))) {
+        sel                    = (sel + 1) % static_cast<int>(shown.size());
+        m_picker_selected      = shown[static_cast<usize>(sel)];
+        m_picker_scroll_to_sel = true;
+    }
+    list->AddText(ImGui::GetFont(), font * 1.2f,
+                  ImVec2(right_at.x + arrow_w * 0.25f, right_at.y + (kit.px(36.0f) - font * 1.2f) * 0.5f),
+                  ImGui::IsItemHovered() ? p.text : p.muted, ">");
+
+    // Horizontal card list
+    ImGui::SetCursorScreenPos(ImVec2(strip_x, cur_y));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::BeginChild("##carousel", ImVec2(strip_w, cards_h), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollbar);
+    ImGui::PopStyleVar();
+    touch_drag_scroll(true);
+    if (m_picker_scroll_to_sel) {
+        const float card_x0 = side_pad + static_cast<float>(sel) * (card_w + card_gap);
+        const float card_x1 = card_x0 + card_w;
+        const float cur_sx  = ImGui::GetScrollX();
+        float       next_sx = cur_sx;
+        if (sel == 0) {
+            next_sx = 0.0f;
+        } else if (card_x0 - side_pad < cur_sx) {
+            next_sx = card_x0 - side_pad;
+        } else if (card_x1 + side_pad > cur_sx + strip_w) {
+            next_sx = card_x1 + side_pad - strip_w;
+        }
+        ImGui::SetScrollX(std::clamp(next_sx, 0.0f, ImGui::GetScrollMaxX()));
+        m_picker_scroll_to_sel = false;
+    }
+
+    ImDrawList* cdl      = ImGui::GetWindowDrawList();
+    const float origin_x = ImGui::GetCursorScreenPos().x;
+    const float origin_y = ImGui::GetCursorScreenPos().y + (cards_h - card_h) * 0.5f;
+    const float view_x0  = ImGui::GetWindowPos().x - card_w;
+    const float view_x1  = ImGui::GetWindowPos().x + ImGui::GetWindowWidth() + card_w;
+
+    for (usize i = 0; i < shown.size(); ++i) {
+        PickerEntry& entry  = m_picker_entries[static_cast<usize>(shown[i])];
+        const bool   is_sel = static_cast<int>(i) == sel;
+        const float  cx     = origin_x + side_pad + static_cast<float>(i) * (card_w + card_gap);
+        const ImVec2 p0(cx, origin_y);
+        const ImVec2 p1(cx + card_w, origin_y + card_h);
+        if (p1.x < view_x0 || p0.x > view_x1) {
+            continue;
+        }
+        if (entry.art_state == PickerEntry::Art::Unknown && m_picker_backend != nullptr) {
+            load_entry_art(entry, m_picker_backend, m_picker_scraper);
+        }
+
+        ImGui::PushID(shown[i]);
+        ImGui::SetCursorScreenPos(p0);
+        if (ImGui::InvisibleButton("##card", ImVec2(card_w, card_h)) && !m_touch_scrolling) {
+            if (m_picker_selected == shown[i]) {
+                m_pending_launch = entry.name;
+            } else {
+                m_picker_selected      = shown[i];
+                m_picker_scroll        = 0.0f;
+                m_picker_scroll_to_sel = true;
+                m_picker_art_timer     = 0.0f;
+                m_picker_art_index     = 0;
+            }
+        }
+        ImGui::PopID();
+
+        const float  r       = kit.px(7.0f);
+        cdl->AddRectFilled(p0, p1, is_sel ? ui::mix(p.panel, p.text, 0.05f) : p.card, r);
+        const bool   has_art = entry.art_state == PickerEntry::Art::Loaded && !entry.art.empty()
+                            && m_picker_backend != nullptr;
+        const float  cap_fs  = kit.small() * 0.76f;
+        const float  cap_h   = has_art ? (cap_fs + kit.px(5.0f)) : (kit.small() * 2.15f + kit.px(8.0f));
+        const float  art_pad = has_art ? kit.px(1.5f) : kit.px(4.0f);
+        const ImVec2 a0(p0.x + art_pad, p0.y + art_pad);
+        const ImVec2 a1(p1.x - art_pad, p1.y - cap_h);
+        if (has_art) {
+            draw_entry_art(cdl, entry, m_picker_backend, is_sel, m_picker_art_index, a0, a1, kit.px(5.0f));
+            cdl->PushClipRect(ImVec2(p0.x, a1.y), p1, true);
+            const std::string cap_title = kit.fitted(entry.title, card_w - kit.px(8.0f));
+            const ImVec2      tsz = ImGui::GetFont()->CalcTextSizeA(cap_fs, FLT_MAX, 0.0f, cap_title.c_str());
+            cdl->AddText(ImGui::GetFont(), cap_fs,
+                         ImVec2(std::floor(p0.x + (card_w - tsz.x) * 0.5f),
+                                std::floor(a1.y + (cap_h - tsz.y) * 0.5f)),
+                         is_sel ? p.text : p.muted, cap_title.c_str());
+            cdl->PopClipRect();
+        } else {
+            cdl->AddRectFilled(a0, a1, ui::with_alpha(p.text, is_sel ? 0.06f : 0.03f), kit.px(4.0f));
+            const float  zip_h = kit.small() * 0.9f + kit.px(8.0f);
+            const ImVec2 title_max(a1.x, std::max(a0.y + kit.px(8.0f), a1.y - zip_h));
+            cdl->PushClipRect(a0, title_max, true);
+            const float big_sz = std::round(font * 0.92f);
+            cdl->AddText(ImGui::GetFont(), big_sz, ImVec2(a0.x + kit.px(8.0f), a0.y + kit.px(8.0f)),
+                         is_sel ? p.accent : p.muted, entry.title.c_str(), nullptr, a1.x - a0.x - kit.px(16.0f));
+            cdl->PopClipRect();
+            cdl->PushClipRect(a0, a1, true);
+            cdl->AddText(ImGui::GetFont(), kit.small() * 0.85f,
+                         ImVec2(a0.x + kit.px(8.0f), a1.y - kit.small() * 0.9f - kit.px(4.0f)),
+                         p.faint, (entry.name + ".zip").c_str());
+            cdl->PopClipRect();
+            cdl->PushClipRect(ImVec2(p0.x, a1.y), p1, true);
+            const std::string cap_title = kit.fitted(entry.title, card_w - kit.px(14.0f));
+            cdl->AddText(ImGui::GetFont(), kit.small(), ImVec2(p0.x + kit.px(7.0f), a1.y + kit.px(3.0f)),
+                         is_sel ? p.text : p.muted, cap_title.c_str());
+            std::string sub = entry.manufacturer;
+            if (!entry.year.empty()) sub += sub.empty() ? entry.year : " · " + entry.year;
+            if (sub.empty()) sub = entry.system.empty() ? "Model 2" : entry.system;
+            cdl->AddText(ImGui::GetFont(), kit.small() * 0.82f,
+                         ImVec2(p0.x + kit.px(7.0f), a1.y + kit.px(3.0f) + kit.small() * 1.05f),
+                         p.muted, kit.fitted(sub, card_w - kit.px(14.0f)).c_str());
+            cdl->PopClipRect();
+        }
+        if (is_sel) {
+            cdl->AddRect(p0, p1, p.active, r, 0, std::max(kit.stroke(), kit.px(2.0f)));
+        } else {
+            cdl->AddRect(p0, p1, p.edge, r, 0, kit.stroke());
+        }
+    }
+    const float total_w = side_pad * 2.0f + static_cast<float>(shown.size()) * (card_w + card_gap) - card_gap;
+    ImGui::SetCursorScreenPos(ImVec2(origin_x + total_w, origin_y));
+    ImGui::Dummy(ImVec2(1.0f, 1.0f));
+    ImGui::EndChild();
+
+    // Pager dots / status line
+    {
+        const PickerEntry& cur = m_picker_entries[static_cast<usize>(m_picker_selected)];
+        const std::string  pos_txt = trf("%d / %zu   ·   %s.zip", sel + 1, shown.size(), cur.name.c_str());
+        const ImVec2       psz     = ImGui::CalcTextSize(pos_txt.c_str());
+        list->AddText(ImGui::GetFont(), kit.small(),
+                      ImVec2(inner_x + (inner_w - psz.x) * 0.5f, cur_y + cards_h + kit.px(2.0f)),
+                      p.muted, pos_txt.c_str());
+    }
+
+    draw_mobile_bottombar(p, kit, config, ImVec2(inner_x, bot_y), inner_w, true, nullptr);
+    if (m_rom_folders_modal_open && m_dir_picker_target == DirPickerTarget::None && !m_dir_picker_request_open) {
+        draw_rom_folders_modal(p, config);
+    }
+    draw_dir_picker_popup(config);
+    m_popup_open = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+#else
+    const float margin   = kit.px(18.0f);
     const float head_top = origin.y + margin;
     const float head_h   = kit.px(30.0f);
     {
@@ -4625,6 +6037,7 @@ void Gui::draw_picker(Config& config)
             }
         }
 
+#if SM2_HAVE_MODEL1 || SM2_HAVE_MODEL3
         // The systems in the middle.
         const ImVec2 seg_size = kit.segments_size(systems);
         const ImVec2 seg_at(std::floor(origin.x + (room.x - seg_size.x) * 0.5f),
@@ -4632,6 +6045,7 @@ void Gui::draw_picker(Config& config)
         if (kit.segments_at("systems", seg_at, systems, m_picker_system)) {
             m_picker_scroll_to_sel = true;
         }
+#endif
     }
     // The accent line under the head, fading at its ends.
     {
@@ -4648,6 +6062,10 @@ void Gui::draw_picker(Config& config)
     // -- the foot: the keys ----------------------------------------------------
     const float foot_h = kit.px(30.0f);
     {
+#if defined(__ANDROID__)
+        list->AddText(ImVec2(origin.x + margin, origin.y + room.y - foot_h + (foot_h - font) * 0.5f), p.muted,
+                      tr("Tap a game to select, then tap Play (or tap twice) to launch."));
+#else
         std::string hint = trf("Enter: play   %s: settings   %s: quit", hotkey_label(config, Config::Hotkey::Overlay),
                                hotkey_label(config, Config::Hotkey::Quit));
         if (io.BackendFlags & ImGuiBackendFlags_HasGamepad) {
@@ -4658,13 +6076,27 @@ void Gui::draw_picker(Config& config)
                       p.faint, hint.c_str());
         list->AddText(ImVec2(origin.x + margin, origin.y + room.y - foot_h + (foot_h - font) * 0.5f), p.faint,
                       tr("Type to search. Arrows or the D-pad choose."));
+#endif
     }
 
     if (m_picker_entries.empty()) {
         const ImVec2 at(origin.x + margin, head_top + head_h + kit.px(30.0f));
-        list->AddText(ImGui::GetFont(), font, at, p.muted,
-                      tr("No ROM archives were found in the ROM folders. Set them in Settings > Paths, then relaunch."),
-                      nullptr, room.x - margin * 2.0f);
+        const char*  empty_msg = tr("No Model 2 ROM archives were found in the ROM folder. Copy .zip or .7z ROM sets there or pick another folder in Settings > Paths.");
+        const float  wrap_w = room.x - margin * 2.0f;
+        const ImVec2 text_sz = ImGui::GetFont()->CalcTextSizeA(font, FLT_MAX, wrap_w, empty_msg);
+        list->AddText(ImGui::GetFont(), font, at, p.muted, empty_msg, nullptr, wrap_w);
+        float next_y = at.y + text_sz.y + kit.px(10.0f);
+        if (!config.model2_rom_dir.empty()) {
+            const std::string dir_line = trf("Current ROM folder: %s", config.model2_rom_dir.c_str());
+            list->AddText(ImGui::GetFont(), font, ImVec2(at.x, next_y), p.muted, dir_line.c_str(), nullptr, wrap_w);
+            next_y += font + kit.px(16.0f);
+        } else {
+            next_y += kit.px(6.0f);
+        }
+        if (kit.button_at(tr("Set ROM Folder..."), ImVec2(at.x, next_y), ui::Kit::Tone::Primary)) {
+            show();
+            m_page = kPagePaths;
+        }
         ImGui::End();
         ImGui::PopStyleColor();
         ImGui::PopStyleVar(2);
@@ -4818,21 +6250,8 @@ void Gui::draw_picker(Config& config)
             }
             continue;
         }
-        if (entry.art_state == PickerEntry::Art::Unknown && m_picker_backend != nullptr && m_picker_scraper != nullptr) {
-            const Scraper::Metadata meta = m_picker_scraper->load_metadata(entry.name, entry.title);
-            for (const std::string& image_path : meta.image_paths) {
-                int                        iw = 0;
-                int                        ih = 0;
-                std::vector<unsigned char> rgba;
-                if (decode_image_rgba(image_path, &iw, &ih, &rgba) && iw > 0 && ih > 0) {
-                    const render::Backend::TextureHandle handle = m_picker_backend->create_texture(
-                        static_cast<u32>(iw), static_cast<u32>(ih), rgba.data());
-                    if (handle != 0) {
-                        entry.art.push_back({handle, static_cast<float>(iw), static_cast<float>(ih)});
-                    }
-                }
-            }
-            entry.art_state = entry.art.empty() ? PickerEntry::Art::None : PickerEntry::Art::Loaded;
+        if (entry.art_state == PickerEntry::Art::Unknown && m_picker_backend != nullptr) {
+            load_entry_art(entry, m_picker_backend, m_picker_scraper);
         }
 
         ImGui::PushID(shown[i]);
@@ -4861,25 +6280,25 @@ void Gui::draw_picker(Config& config)
         }
         ImGui::PopID();
 
-        const float r = kit.px(6.0f);
+        const float  r       = kit.px(6.0f);
         grid->AddRectFilled(p0, p1, hovered && !is_sel ? ui::mix(p.card, p.text, 0.06f) : p.card, r);
-        const ImVec2 a0(p0.x + kit.px(4.0f), p0.y + kit.px(4.0f));
-        const ImVec2 a1(p1.x - kit.px(4.0f), p0.y + art_h - kit.px(2.0f));
-        if (entry.art_state == PickerEntry::Art::Loaded && !entry.art.empty() && m_picker_backend != nullptr) {
-            // The highlighted game cycles its images; others show the first.
-            int img = 0;
-            if (is_sel && entry.art.size() > 1) img = m_picker_art_index % static_cast<int>(entry.art.size());
-            const PickerEntry::Art1& art = entry.art[static_cast<usize>(img)];
-            ImVec2 d0 = a0, d1 = a1;
-            if (art.w > 0.0f && art.h > 0.0f) {
-                const float aw = a1.x - a0.x, ah = a1.y - a0.y;
-                const float k  = std::min(aw / art.w, ah / art.h);
-                const float dw = std::floor(art.w * k), dh = std::floor(art.h * k);
-                d0 = ImVec2(std::floor(a0.x + (aw - dw) * 0.5f), std::floor(a0.y + (ah - dh) * 0.5f));
-                d1 = ImVec2(d0.x + dw, d0.y + dh);
-            }
-            grid->AddImageRounded(reinterpret_cast<ImTextureID>(m_picker_backend->texture_imgui_id(art.handle)), d0,
-                                  d1, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f), IM_COL32_WHITE, kit.px(3.0f));
+        const bool   has_art = entry.art_state == PickerEntry::Art::Loaded && !entry.art.empty()
+                            && m_picker_backend != nullptr;
+        const float  cap_fs  = kit.small() * 0.82f;
+        const float  tile_cap_h = has_art ? (cap_fs + kit.px(6.0f)) : (tile_h - art_h);
+        const float  art_pad = has_art ? kit.px(1.5f) : kit.px(4.0f);
+        const ImVec2 a0(p0.x + art_pad, p0.y + art_pad);
+        const ImVec2 a1(p1.x - art_pad, p1.y - tile_cap_h);
+        if (has_art) {
+            draw_entry_art(grid, entry, m_picker_backend, is_sel, m_picker_art_index, a0, a1, kit.px(4.0f));
+            grid->PushClipRect(ImVec2(p0.x, a1.y), p1, true);
+            const std::string cap_title = kit.fitted(entry.title, tile_w - kit.px(10.0f));
+            const ImVec2      tsz = ImGui::GetFont()->CalcTextSizeA(cap_fs, FLT_MAX, 0.0f, cap_title.c_str());
+            grid->AddText(ImGui::GetFont(), cap_fs,
+                          ImVec2(std::floor(p0.x + (tile_w - tsz.x) * 0.5f),
+                                 std::floor(a1.y + (tile_cap_h - tsz.y) * 0.5f)),
+                          is_sel ? p.text : p.muted, cap_title.c_str());
+            grid->PopClipRect();
         } else {
             // No picture: the title large in the art's place, faintly.
             grid->AddRectFilled(a0, a1, ui::with_alpha(p.text, 0.03f), kit.px(3.0f));
@@ -4887,12 +6306,12 @@ void Gui::draw_picker(Config& config)
             grid->AddText(ImGui::GetFont(), std::round(font * 1.15f), ImVec2(a0.x + kit.px(10.0f), a0.y + kit.px(10.0f)),
                           p.faint, entry.title.c_str(), nullptr, a1.x - a0.x - kit.px(20.0f));
             grid->PopClipRect();
+            // The caption: the title on up to two lines.
+            grid->PushClipRect(ImVec2(p0.x, p0.y + art_h), p1, true);
+            grid->AddText(ImGui::GetFont(), kit.small(), ImVec2(p0.x + kit.px(8.0f), p0.y + art_h + kit.px(6.0f)),
+                          is_sel ? p.text : p.muted, entry.title.c_str(), nullptr, tile_w - kit.px(16.0f));
+            grid->PopClipRect();
         }
-        // The caption: the title on up to two lines.
-        grid->PushClipRect(ImVec2(p0.x, p0.y + art_h), p1, true);
-        grid->AddText(ImGui::GetFont(), kit.small(), ImVec2(p0.x + kit.px(8.0f), p0.y + art_h + kit.px(6.0f)),
-                      is_sel ? p.text : p.muted, entry.title.c_str(), nullptr, tile_w - kit.px(16.0f));
-        grid->PopClipRect();
         if (is_sel) {
             kit.focus_ring(grid, p0, p1, r);
         } else {
@@ -4987,6 +6406,7 @@ void Gui::draw_picker(Config& config)
     ImGui::End();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
+#endif
 }
 
 }  // namespace sm2::osd
