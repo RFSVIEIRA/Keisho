@@ -23,6 +23,7 @@
 #include "osd/i18n.h"
 #include "osd/input.h"
 #include "osd/scraper.h"
+#include "osd/touch_gamepad.h"
 #include "osd/ui_text.h"
 #include "render/geometry.h"
 
@@ -2979,10 +2980,63 @@ void Gui::page_gamepad(ui::Kit& kit, Config& config, Input* input)
         m_pad_family_followed = m_current_family;
         m_pad_family          = m_current_family;
     }
+
+    const GameFamily*  family = nullptr;
+    Config::PadLayout  game_default;
+    Config::PadLayout  scratch;
+    Config::PadLayout* binds  = &config.pad;
+    const auto refresh_family = [&]() {
+        family = nullptr;
+        for (const GameFamily& f : m_families) {
+            if (f.key == m_pad_family) {
+                family = &f;
+                break;
+            }
+        }
+        // A game without its own layout is edited as a copy of its default (the
+        // default layout with the game's logical changes), kept once changed.
+        game_default = config.pad;
+        if (!m_pad_family.empty()) {
+            Config without = config;
+            without.pad_layouts.erase(m_pad_family);
+            game_default     = Input::game_layout(without, m_pad_family, family != nullptr ? family->inputs : 0);
+            const auto found = config.pad_layouts.find(m_pad_family);
+            if (found != config.pad_layouts.end()) {
+                binds = &found->second;
+                return;
+            }
+            scratch = game_default;
+            binds   = &scratch;
+            return;
+        }
+        binds = &config.pad;
+    };
+    const auto commit_scratch = [&]() {
+        if (binds == &scratch && !m_pad_family.empty() && scratch != game_default) {
+            config.pad_layouts[m_pad_family] = scratch;
+        }
+    };
     const auto select_family = [&](const std::string& key) {
+        commit_scratch();
         m_pad_family = key;
         cancel_captures();
+        refresh_family();
     };
+    const auto draw_family_dropdown = [&](const char* label) {
+        std::vector<std::string> labels = {tr("Default")};
+        std::vector<std::string> keys   = {""};
+        int                      current = 0;
+        for (const GameFamily& item : m_families) {
+            labels.push_back(config.pad_layouts.count(item.key) != 0 ? item.title + "  ·  " + tr("custom")
+                                                                      : item.title);
+            keys.push_back(item.key);
+            if (item.key == m_pad_family) current = static_cast<int>(keys.size()) - 1;
+        }
+        if (kit.dropdown(label, nullptr, labels, current, m_pad_family_filter, sizeof m_pad_family_filter)) {
+            select_family(keys[static_cast<size_t>(current)]);
+        }
+    };
+    refresh_family();
 
     kit.begin_group(tr("On-screen gamepad"));
     {
@@ -3012,6 +3066,33 @@ void Gui::page_gamepad(ui::Kit& kit, Config& config, Input* input)
         }
         draw_touch_gun_aim_choice(kit, config, off);
         draw_gun_stick_sensitivity_slider(kit, config, off || config.touch_gun_aim != Config::TouchGunAim::Stick);
+
+        kit.tip(tr("Every game uses the default on-screen controls until you hide or customize buttons for it here."));
+        draw_family_dropdown(tr("Buttons for"));
+
+        kit.tip(tr("Toggle individual on-screen controls for this game. Menu and exit remain visible so you can "
+                   "always get back."));
+        const std::array<const char*, 1> touch_actions = {tr("Show all")};
+        const std::array<bool, 1>        touch_enabled = {!off && binds->touch_hidden != 0};
+        const char* touch_about = m_pad_family.empty()
+                                      ? tr("Applies to games using the default layout.")
+                                      : binds == &scratch
+                                            ? tr("Uses the default visibility until a control is hidden.")
+                                            : tr("Custom visibility saved for this game.");
+        if (kit.actions(tr("Visible buttons"), touch_about, touch_actions, touch_enabled) == 0) {
+            binds->touch_hidden = 0;
+        }
+        const std::vector<TouchGamepad::ControlOption> touch_opts =
+            TouchGamepad::describe_controls(config, family);
+        for (const TouchGamepad::ControlOption& opt : touch_opts) {
+            bool visible = (binds->touch_hidden & opt.bit) == 0;
+            char row_id[32];
+            std::snprintf(row_id, sizeof row_id, "touch_vis_%u", opt.bit);
+            if (kit.toggle(opt.label.c_str(), nullptr, visible, {.disabled = off, .id = row_id})) {
+                if (visible) binds->touch_hidden &= ~opt.bit;
+                else         binds->touch_hidden |= opt.bit;
+            }
+        }
     }
     kit.end_group();
 
@@ -3035,47 +3116,10 @@ void Gui::page_gamepad(ui::Kit& kit, Config& config, Input* input)
     }
 
     // Which game's layout.
-    {
-        std::vector<std::string> labels = {tr("Default")};
-        std::vector<std::string> keys   = {""};
-        int                      current = 0;
-        for (const GameFamily& family : m_families) {
-            labels.push_back(config.pad_layouts.count(family.key) != 0 ? family.title + "  ·  " + tr("custom")
-                                                                        : family.title);
-            keys.push_back(family.key);
-            if (family.key == m_pad_family) current = static_cast<int>(keys.size()) - 1;
-        }
-        kit.tip(tr("Every game uses the default layout until it is given one of its own. Pick a game, "
-                   "change a binding, and the game keeps the change. A game shows only the controls its "
-                   "cabinet has."));
-        if (kit.dropdown(tr("Layout for"), nullptr, labels, current, m_pad_family_filter, sizeof m_pad_family_filter)) {
-            select_family(keys[static_cast<size_t>(current)]);
-        }
-    }
-
-    const GameFamily* family = nullptr;
-    for (const GameFamily& f : m_families) {
-        if (f.key == m_pad_family) family = &f;
-    }
-    // A game without its own layout is edited as a copy of its default (the
-    // default layout with the game's logical changes), kept once changed.
-    Config::PadLayout game_default = config.pad;
-    if (!m_pad_family.empty()) {
-        Config without = config;
-        without.pad_layouts.erase(m_pad_family);
-        game_default = Input::game_layout(without, m_pad_family, family != nullptr ? family->inputs : 0);
-    }
-    Config::PadLayout  scratch;
-    Config::PadLayout* binds = &config.pad;
-    if (!m_pad_family.empty()) {
-        const auto found = config.pad_layouts.find(m_pad_family);
-        if (found != config.pad_layouts.end()) {
-            binds = &found->second;
-        } else {
-            scratch = game_default;
-            binds   = &scratch;
-        }
-    }
+    kit.tip(tr("Every game uses the default layout until it is given one of its own. Pick a game, "
+               "change a binding, and the game keeps the change. A game shows only the controls its "
+               "cabinet has."));
+    draw_family_dropdown(tr("Layout for"));
 
     int&       edit = m_pad_edit_player;
     const auto p    = static_cast<usize>(edit);
@@ -3663,9 +3707,7 @@ void Gui::page_gamepad(ui::Kit& kit, Config& config, Input* input)
         ImGui::SetCursorScreenPos(ImVec2(top.x, below_y + slot_h + 6.0f * s));
         ImGui::Dummy(ImVec2(width, 0.0f));
     }
-    if (binds == &scratch && scratch != game_default) {
-        config.pad_layouts[m_pad_family] = scratch;
-    }
+    commit_scratch();
 
     // The capture in progress, with Skip and Stop while Map all runs.
     if (capturing_here && m_map_slot >= 0) {

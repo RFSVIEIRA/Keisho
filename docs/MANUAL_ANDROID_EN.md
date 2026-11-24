@@ -175,8 +175,15 @@ Under **Settings → Input → Gamepad → Virtual gamepad** (or `keisho.ini` / 
   - *Sega Rally / Emergency Call Ambulance / Dirt Devils / Super GT 24h*: `GAS`, `BRAKE`, `GEAR-`, `GEAR+`, **`VIEW`**
   - *Daytona USA 1/2 / Scud Race / Le Mans 24 / Virtua Racing*: `GAS`, `BRAKE`, `GEAR-`, `GEAR+`, **`VR1`–`VR4`**
   - *Harley-Davidson*: `GAS`, `BRAKE`, `GEAR-`, `GEAR+`, **`MUSIC`**, **`VIEW`**
-  - *Motor Raid*: `GAS`, `BRAKE`, `GEAR-`, `GEAR+`, **`PUNCH`**, **`KICK`**
-  - *Fighters / Action / Sports / Light Guns / Flight / Ski*: cabinet-specific layouts & labels (*Virtual On*, *Virtua Fighter*, *SpikeOut*, *Virtua Striker*, *Desert Tank*, *Star Wars Trilogy*, *Wing War*, *Sega Bass Fishing*, *Top Skater*, *Ski Champ*, *Sega Water Ski*, *Virtua Cop*, *House of the Dead*, *Behind Enemy Lines*, etc.).
+  - *Motor Raid*: `GAS`, `BRAKE`, **`PUNCH`**, **`KICK`** *(without unused gear shift buttons)*
+  - *Fighters / Action / Sports / Light Guns / Flight / Ski*: cabinet-specific layouts & labels showing only the buttons each game actually uses (*Virtual On*, *Virtua Fighter*, *SpikeOut*, *Virtua Striker*, *Harikiri Pro Yakyuu '98*, *Desert Tank*, *Star Wars Trilogy*, *Wing War*, *Sega Bass Fishing*, *Top Skater*, *Ski Champ*, *Sega Water Ski*, *Virtua Cop*, *House of the Dead*, *Behind Enemy Lines*, etc.).
+
+### Customizing Visible On-Screen Buttons Per Game (`touch_hidden`)
+Under **Settings → Input → Gamepad → On-screen gamepad**:
+- Pick **Buttons for** (`Default` for global visibility, or any individual game family such as `Daytona USA`, `Virtua Striker`, `Motor Raid`, etc.).
+- Toggle individual on-screen controls or HUD pills (`COIN`, `START`, `SAVE / SLOT / LOAD`, `SERVICE / TEST`, `FPS`).
+- Click **Show all** to quickly unhide every button in that profile (`SETTINGS` and `EXIT` remain visible so you can never lock yourself out).
+- Per-game visibility is saved automatically in `keisho.ini` under the game's `[<family>]` section as `touch_hidden`.
 
 ### Shooting & Light-Gun Games (`Virtua Cop 1/2`, `House of the Dead`, `Behind Enemy Lines`, `Gunblade NY`, `Rail Chase 2`, `The Lost World`, `LA Machineguns`, `Ocean Hunter`)
 All shooting/light-gun titles (across both Model 2 and Model 3) are detected automatically from `data/games.xml` and share the same touch aiming and stick settings.

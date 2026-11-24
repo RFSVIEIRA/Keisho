@@ -213,9 +213,10 @@ bool TouchGamepad::hit_test(const Widget& w, float px, float py)
         && py >= (w.cy - hh) && py <= (w.cy + hh);
 }
 
-std::vector<TouchGamepad::Widget> TouchGamepad::build_layout(
+std::vector<TouchGamepad::Widget> TouchGamepad::build_raw_layout(
     const Config& config, const Gui::GameFamily* family,
-    bool pad_active, float w, float h) const
+    bool pad_active, float w, float h, char* slot_label_buf, size_t slot_label_size, int active_slot,
+    SDL_Window* window)
 {
     std::vector<Widget> out;
     if (w <= 0.0f || h <= 0.0f) {
@@ -232,12 +233,12 @@ std::vector<TouchGamepad::Widget> TouchGamepad::build_layout(
     float inset_r = 0.0f;
     float inset_b = 0.0f;
 #if defined(__ANDROID__)
-    if (m_window != nullptr) {
+    if (window != nullptr) {
         SDL_Rect safe{};
         int      win_w = 0;
         int      win_h = 0;
-        SDL_GetWindowSize(m_window, &win_w, &win_h);
-        if (win_w > 0 && win_h > 0 && SDL_GetWindowSafeArea(m_window, &safe) && safe.w > 0 && safe.h > 0) {
+        SDL_GetWindowSize(window, &win_w, &win_h);
+        if (win_w > 0 && win_h > 0 && SDL_GetWindowSafeArea(window, &safe) && safe.w > 0 && safe.h > 0) {
             const float sx = w / static_cast<float>(win_w);
             const float sy = h / static_cast<float>(win_h);
             inset_l = std::max(0.0f, static_cast<float>(safe.x) * sx);
@@ -253,6 +254,7 @@ std::vector<TouchGamepad::Widget> TouchGamepad::build_layout(
     // Android navigation bars even when immersive mode reports zero insets.
     const float safe_bottom = std::max({inset_b + 20.0f * hu, 72.0f * hu, h * 0.095f});
 #else
+    (void)window;
     const float safe_left   = std::max(inset_l + 34.0f * hu, w * 0.032f);
     const float safe_right  = std::max(inset_r + 34.0f * hu, w * 0.032f);
     const float safe_top    = std::max(inset_t + 20.0f * hu, h * 0.028f);
@@ -308,12 +310,12 @@ std::vector<TouchGamepad::Widget> TouchGamepad::build_layout(
     const float bar_y      = h - safe_bottom - bar_h * 0.5f;
     const float bar_cx     = safe_left + inner_w * 0.5f;
     const float bar_half_w = bar_gap * 2.0f + bar_w * 0.5f;
-    std::snprintf(m_slot_label, sizeof m_slot_label, "%s %d", tr("SLOT"), m_active_slot);
+    std::snprintf(slot_label_buf, slot_label_size, "%s %d", tr("SLOT"), active_slot);
     const auto role_u8 = [](Config::PadRole r) { return static_cast<u8>(r); };
     out.push_back(Widget{ControlId::Coin,    bar_cx - bar_gap * 2.0f, bar_y, bar_w, bar_h, tr("COIN"),  nullptr, false, false, false,
                          ActionTarget::PadRole, role_u8(Config::PadRole::Coin)});
     out.push_back(Widget{ControlId::HudSave, bar_cx - bar_gap * 1.0f, bar_y, bar_w, bar_h, tr("SAVE"),  nullptr, false, false, false});
-    out.push_back(Widget{ControlId::HudSlot, bar_cx,                  bar_y, bar_w, bar_h, m_slot_label, nullptr, false, false, false});
+    out.push_back(Widget{ControlId::HudSlot, bar_cx,                  bar_y, bar_w, bar_h, slot_label_buf, nullptr, false, false, false});
     out.push_back(Widget{ControlId::HudLoad, bar_cx + bar_gap * 1.0f, bar_y, bar_w, bar_h, tr("LOAD"),  nullptr, false, false, false});
     out.push_back(Widget{ControlId::Start,   bar_cx + bar_gap * 2.0f, bar_y, bar_w, bar_h, tr("START"), nullptr, false, false, false,
                          ActionTarget::PadRole, role_u8(Config::PadRole::Start)});
@@ -601,7 +603,8 @@ std::vector<TouchGamepad::Widget> TouchGamepad::build_layout(
             out.push_back(Widget{ControlId::TriggerL, cx + span, cy, btn_r, 0.0f, "B", tr("BRAKE"), true, false, false,
                                  ActionTarget::AxisRoleBrake, 0});
         }
-        const bool has_gears = family->gears || family->shift || family->gate;
+        const bool is_motoraid = family->key == "motoraid";
+        const bool has_gears = !is_motoraid && (family->gears || family->shift || family->gate);
         if (has_gears) {
             out.push_back(Widget{ControlId::BtnLB, cx - span, cy,        btn_r, 0.0f, "X", tr("GEAR-"), true, false, false,
                                  ActionTarget::PadRole, role_u8(Config::PadRole::GearDown)});
@@ -613,9 +616,10 @@ std::vector<TouchGamepad::Widget> TouchGamepad::build_layout(
         if (has_flag(family, rom::InputFlags::Harley)) {
             extras.push_back({ControlId::BtnA, tr("MUSIC"), false, ActionTarget::PadRole, role_u8(Config::PadRole::Button1)});
             extras.push_back({ControlId::BtnB, tr("VIEW"),  false, ActionTarget::PadRole, role_u8(Config::PadRole::Button2)});
-        } else if (family->key == "motoraid") {
-            extras.push_back({ControlId::BtnA, tr("PUNCH"), false, ActionTarget::PadRole, role_u8(Config::PadRole::Button1)});
-            extras.push_back({ControlId::BtnB, tr("KICK"),  false, ActionTarget::PadRole, role_u8(Config::PadRole::Button2)});
+        } else if (is_motoraid) {
+            // Motor Raid maps Punch/Kick to IN1 0x10/0x20 via shift_buttons (GearUp/GearDown).
+            extras.push_back({ControlId::BtnA, tr("PUNCH"), false, ActionTarget::PadRole, role_u8(Config::PadRole::GearUp)});
+            extras.push_back({ControlId::BtnB, tr("KICK"),  false, ActionTarget::PadRole, role_u8(Config::PadRole::GearDown)});
         } else {
             if (family->vr >= 2) {
                 static constexpr const char* kVrLbl[4] = {"VR1", "VR2", "VR3", "VR4"};
@@ -687,7 +691,8 @@ std::vector<TouchGamepad::Widget> TouchGamepad::build_layout(
             {ControlId::BtnX, tr("SHIFT"),  false, Config::PadRole::Button3},
             {ControlId::BtnY, tr("JUMP"),   false, Config::PadRole::Button4},
         };
-    } else if (has_flag(family, rom::InputFlags::Soccer)) {
+    } else if (has_flag(family, rom::InputFlags::Soccer)
+               || (family != nullptr && family->key == "vstriker")) {
         faces = {
             {ControlId::BtnA, tr("L.PASS"), true,  Config::PadRole::Button1},
             {ControlId::BtnB, tr("SHOOT"),  false, Config::PadRole::Button2},
@@ -704,13 +709,13 @@ std::vector<TouchGamepad::Widget> TouchGamepad::build_layout(
             {ControlId::BtnA, tr("SHOT"), true,  Config::PadRole::Button1},
             {ControlId::BtnB, tr("BOMB"), false, Config::PadRole::Button2},
         };
-    } else if (family != nullptr && family->bat) {
+    } else if (family != nullptr && (family->bat || family->key == "hpyagu98")) {
         faces = {
             {ControlId::BtnA, tr("SWING"), true,  Config::PadRole::Button1},
             {ControlId::BtnB, tr("BUNT"),  false, Config::PadRole::Button2},
             {ControlId::BtnX, tr("RUN"),   false, Config::PadRole::Button3},
         };
-        show_bat_pill = true;
+        show_bat_pill = family->bat;
     } else if (is_gun_game(family)) {
         faces = {
             {ControlId::BtnA, tr("FIRE"), true, Config::PadRole::Button1},
@@ -756,6 +761,116 @@ std::vector<TouchGamepad::Widget> TouchGamepad::build_layout(
         add_pill_row(cx, row_y, row_w, 32.0f * u, shoulders, 2);
     }
     return out;
+}
+
+u32 TouchGamepad::control_bit(ControlId id)
+{
+    switch (id) {
+        case ControlId::LeftStick:  return Config::kTouchHideStick;
+        case ControlId::RightStick: return Config::kTouchHideRightStick;
+        case ControlId::BtnA:       return Config::kTouchHideBtnA;
+        case ControlId::BtnB:       return Config::kTouchHideBtnB;
+        case ControlId::BtnX:       return Config::kTouchHideBtnX;
+        case ControlId::BtnY:       return Config::kTouchHideBtnY;
+        case ControlId::BtnLB:      return Config::kTouchHideBtnLB;
+        case ControlId::BtnRB:      return Config::kTouchHideBtnRB;
+        case ControlId::TriggerL:   return Config::kTouchHideTriggerL;
+        case ControlId::TriggerR:   return Config::kTouchHideTriggerR;
+        case ControlId::DpadUp:
+        case ControlId::DpadDown:
+        case ControlId::DpadLeft:
+        case ControlId::DpadRight:  return Config::kTouchHideExtras;
+        case ControlId::Coin:       return Config::kTouchHideCoin;
+        case ControlId::Start:      return Config::kTouchHideStart;
+        case ControlId::HudSave:
+        case ControlId::HudSlot:
+        case ControlId::HudLoad:    return Config::kTouchHideSaveBar;
+        case ControlId::HudService:
+        case ControlId::HudTest:    return Config::kTouchHideServiceTest;
+        case ControlId::HudFps:     return Config::kTouchHideFps;
+        case ControlId::Menu:
+        case ControlId::HudExit:
+        case ControlId::HudView:
+        case ControlId::None:       return 0;
+    }
+    return 0;
+}
+
+std::vector<TouchGamepad::Widget> TouchGamepad::build_layout(
+    const Config& config, const Gui::GameFamily* family,
+    bool pad_active, float w, float h) const
+{
+    std::vector<Widget> out =
+        build_raw_layout(config, family, pad_active, w, h, m_slot_label, sizeof m_slot_label, m_active_slot, m_window);
+    const std::string key = family != nullptr ? family->key : std::string{};
+    const u32 hidden = config.pad_layout_for(key).touch_hidden;
+    if (hidden != 0) {
+        out.erase(std::remove_if(out.begin(), out.end(),
+                                 [hidden](const Widget& widget) {
+                                     const u32 bit = control_bit(widget.id);
+                                     return bit != 0 && (hidden & bit) != 0;
+                                 }),
+                  out.end());
+    }
+    return out;
+}
+
+std::vector<TouchGamepad::ControlOption> TouchGamepad::describe_controls(
+    const Config& config, const Gui::GameFamily* family)
+{
+    char slot_buf[24] = "SLOT 1";
+    const std::vector<Widget> raw =
+        build_raw_layout(config, family, true, 1280.0f, 720.0f, slot_buf, sizeof slot_buf, 1);
+    const bool has_right = std::any_of(raw.begin(), raw.end(), [](const Widget& widget) {
+        return widget.id == ControlId::RightStick;
+    });
+
+    std::vector<ControlOption> options;
+    const auto upsert = [&](u32 bit, const std::string& text) {
+        if (bit == 0 || text.empty()) return;
+        for (ControlOption& opt : options) {
+            if (opt.bit == bit) {
+                if (opt.label.find(text) == std::string::npos) {
+                    opt.label += " / " + text;
+                }
+                return;
+            }
+        }
+        options.push_back({bit, text});
+    };
+
+    const auto widget_name = [&](const Widget& widget) -> std::string {
+        if (widget.id == ControlId::LeftStick)  return has_right ? tr("Left stick") : tr("Analog stick");
+        if (widget.id == ControlId::RightStick) return tr("Right stick");
+        if (widget.id == ControlId::HudSave || widget.id == ControlId::HudSlot || widget.id == ControlId::HudLoad) {
+            return tr("SAVE / SLOT / LOAD");
+        }
+        if (widget.id == ControlId::HudService || widget.id == ControlId::HudTest) {
+            return tr("SERVICE / TEST");
+        }
+        if (widget.sublabel != nullptr && widget.sublabel[0] != '\0') {
+            return widget.sublabel;
+        }
+        return widget.label != nullptr ? widget.label : "";
+    };
+
+    // Order in settings UI: sticks & action buttons first, then system bar/HUD pills.
+    const auto is_bar_or_hud = [](ControlId id) {
+        return id == ControlId::Coin || id == ControlId::Start
+            || id == ControlId::HudSave || id == ControlId::HudSlot || id == ControlId::HudLoad
+            || id == ControlId::HudService || id == ControlId::HudTest || id == ControlId::HudFps;
+    };
+    for (const Widget& widget : raw) {
+        if (!is_bar_or_hud(widget.id)) {
+            upsert(control_bit(widget.id), widget_name(widget));
+        }
+    }
+    for (const Widget& widget : raw) {
+        if (is_bar_or_hud(widget.id)) {
+            upsert(control_bit(widget.id), widget_name(widget));
+        }
+    }
+    return options;
 }
 
 bool TouchGamepad::handle_event(const SDL_Event& event, float screen_w, float screen_h,

@@ -175,8 +175,15 @@ Em **Definições → Entrada → Comando → Comando virtual** (ou no `keisho.i
   - *Sega Rally / ECA / Dirt Devils / Super GT 24h*: `GAS`, `BRAKE`, `GEAR-`, `GEAR+` + **`CÂMARA` (`VIEW`)**
   - *Daytona USA 1/2 / Scud Race / Le Mans 24 / Virtua Racing*: `GAS`, `BRAKE`, `GEAR-`, `GEAR+` + **`VR1`, `VR2`, `VR3`, `VR4`**
   - *Harley-Davidson*: `GAS`, `BRAKE`, `GEAR-`, `GEAR+` + **`MÚSICA`** e **`CÂMARA`**
-  - *Motor Raid*: `GAS`, `BRAKE`, `GEAR-`, `GEAR+` + **`MURRO`** e **`PONTAPÉ`**
-  - *Jogos de Luta / Ação / Desporto / Pistola / Voos / Esqui*: etiquetas e disposições adaptadas à respetiva cabina (*Virtual On*, *Virtua Fighter*, *SpikeOut*, *Virtua Striker*, *Desert Tank*, *Star Wars Trilogy*, *Wing War*, *Sega Bass Fishing*, *Top Skater*, *Ski Champ*, *Sega Water Ski*, *Virtua Cop*, *House of the Dead*, *Behind Enemy Lines*, etc.).
+  - *Motor Raid*: `GAS`, `BRAKE` + **`MURRO`** e **`PONTAPÉ`** *(sem seletor de mudanças fictício)*
+  - *Jogos de Luta / Ação / Desporto / Pistola / Voos / Esqui*: etiquetas e disposições adaptadas à respetiva cabina — só os botões reais do jogo aparecem (*Virtual On*, *Virtua Fighter*, *SpikeOut*, *Virtua Striker*, *Hattrick Hero / Harikiri Pro Yakyuu*, *Desert Tank*, *Star Wars Trilogy*, *Wing War*, *Sega Bass Fishing*, *Top Skater*, *Ski Champ*, *Sega Water Ski*, *Virtua Cop*, *House of the Dead*, *Behind Enemy Lines*, etc.).
+
+### Personalizar os botões visíveis no ecrã por jogo (`touch_hidden`)
+Em **Definições → Entrada → Comando → Comando no ecrã**:
+- Escolha o jogo em **Botões para** (*Predefinição* para todos os jogos, ou um título específico como `Daytona USA`, `Virtua Striker`, `Motor Raid`, etc.).
+- Ative ou desative individualmente cada botão/analógico tátil ou barra (`COIN`, `START`, `GRAVAR / SLOT / ABRIR`, `SERVICE / TEST`, `FPS`).
+- Use **Mostrar todos** para voltar a mostrar tudo rapidamente nesse perfil (`SETTINGS/MENU` e `EXIT/SAIR` ficam sempre visíveis para nunca perder o acesso ao menu).
+- As preferências por jogo ficam guardadas automaticamente no `keisho.ini` na secção `[<jogo>]` através da chave `touch_hidden`.
 
 ### Jogos de Tiro / Pistola de Luz (`Virtua Cop 1/2`, `House of the Dead`, `Behind Enemy Lines`, `Gunblade NY`, `Rail Chase 2`, `The Lost World`, `LA Machineguns`, `Ocean Hunter`)
 As definições de mira aplicam-se automaticamente a **todos** os títulos de pistola/tiro (Model 2 e Model 3), a partir dos metadados de `data/games.xml`.

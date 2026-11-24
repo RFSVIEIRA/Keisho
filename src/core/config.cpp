@@ -398,20 +398,95 @@ const std::string& android_assets_directory() { return g_android_assets_dir; }
 
 namespace {
 
-/// The section holding the default gamepad layout.
-constexpr const char* kDefaultPadSection = "gamepad";
-
 /// The sections named after the overlay's tabs; any other is a game family's.
 constexpr std::array<const char*, 8> kTabSections = {
     "video", "audio", "paths", "gamepad", "wheel", "lightgun", "network", "system",
 };
 
-/// What a pad1_*/pad2_* key did to `layout`.
+/// What a pad1_*/pad2_*/touch_hidden key did to `layout`.
 enum class PadKey { NotPad, Unknown, BadValue, Set };
+
+struct TouchHideEntry {
+    const char* name;
+    u32         bit;
+};
+
+constexpr std::array<TouchHideEntry, 16> kTouchHideEntries = {{
+    {"stick",        Config::kTouchHideStick},
+    {"stick_r",      Config::kTouchHideRightStick},
+    {"btn_a",        Config::kTouchHideBtnA},
+    {"btn_b",        Config::kTouchHideBtnB},
+    {"btn_x",        Config::kTouchHideBtnX},
+    {"btn_y",        Config::kTouchHideBtnY},
+    {"lb",           Config::kTouchHideBtnLB},
+    {"rb",           Config::kTouchHideBtnRB},
+    {"lt",           Config::kTouchHideTriggerL},
+    {"rt",           Config::kTouchHideTriggerR},
+    {"extras",       Config::kTouchHideExtras},
+    {"coin",         Config::kTouchHideCoin},
+    {"start",        Config::kTouchHideStart},
+    {"save_bar",     Config::kTouchHideSaveBar},
+    {"service_test", Config::kTouchHideServiceTest},
+    {"fps",          Config::kTouchHideFps},
+}};
+
+[[nodiscard]] bool parse_touch_hidden(const std::string& value, u32* out)
+{
+    const std::string text = lowered(trim(value));
+    if (text.empty() || text == "none" || text == "0") {
+        *out = 0;
+        return true;
+    }
+    u32 mask = 0;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        while (pos < text.size()
+               && (text[pos] == ',' || std::isspace(static_cast<unsigned char>(text[pos])))) {
+            ++pos;
+        }
+        if (pos >= text.size()) break;
+        size_t end = pos;
+        while (end < text.size()
+               && text[end] != ',' && !std::isspace(static_cast<unsigned char>(text[end]))) {
+            ++end;
+        }
+        const std::string_view token(text.data() + pos, end - pos);
+        bool matched = false;
+        for (const TouchHideEntry& e : kTouchHideEntries) {
+            if (token == e.name) {
+                mask |= e.bit;
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) {
+            return false;
+        }
+        pos = end;
+    }
+    *out = mask;
+    return true;
+}
+
+[[nodiscard]] std::string touch_hidden_text(u32 mask)
+{
+    if (mask == 0) {
+        return "none";
+    }
+    std::string out;
+    for (const TouchHideEntry& e : kTouchHideEntries) {
+        if ((mask & e.bit) != 0) {
+            if (!out.empty()) out += ", ";
+            out += e.name;
+        }
+    }
+    return out.empty() ? "none" : out;
+}
 
 [[nodiscard]] bool is_pad_key(const std::string& key)
 {
-    return key.rfind("pad1_button_", 0) == 0 || key.rfind("pad2_button_", 0) == 0
+    return key == "touch_hidden"
+        || key.rfind("pad1_button_", 0) == 0 || key.rfind("pad2_button_", 0) == 0
         || key.rfind("pad1_axis_", 0) == 0 || key.rfind("pad2_axis_", 0) == 0;
 }
 
@@ -420,6 +495,9 @@ enum class PadKey { NotPad, Unknown, BadValue, Set };
 {
     if (!is_pad_key(key)) {
         return PadKey::NotPad;
+    }
+    if (key == "touch_hidden") {
+        return parse_touch_hidden(value, &layout->touch_hidden) ? PadKey::Set : PadKey::BadValue;
     }
     const bool is_button = key.compare(4, 8, "_button_") == 0;
     const usize player = key[3] == '2' ? 1 : 0;
@@ -473,6 +551,7 @@ void write_pad_layout(std::ostream& out, const Config::PadLayout& layout)
             }
         }
     }
+    out << "touch_hidden = " << touch_hidden_text(layout.touch_hidden) << "\n";
 }
 
 /// Parses virtual-gamepad and lightgun touch/stick sensitivity settings.

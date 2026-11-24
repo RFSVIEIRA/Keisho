@@ -71,6 +71,16 @@ public:
     /// True while any touch finger is currently held on a virtual control.
     [[nodiscard]] bool any_touch_claimed() const { return !m_fingers.empty() || m_gun_finger_down; }
 
+    struct ControlOption {
+        u32         bit = 0;
+        std::string label;
+    };
+
+    /// Returns the toggleable on-screen controls that `family` uses (or Default
+    /// when `family` is null), with the game's own button labels.
+    [[nodiscard]] static std::vector<ControlOption> describe_controls(
+        const Config& config, const Gui::GameFamily* family);
+
 private:
     enum class ControlId {
         None,
@@ -132,10 +142,21 @@ private:
         float        y         = 0.0f;
     };
 
+    [[nodiscard]] static std::vector<Widget> build_raw_layout(const Config& config,
+                                                              const Gui::GameFamily* family,
+                                                              bool pad_active,
+                                                              float w, float h,
+                                                              char* slot_label_buf,
+                                                              size_t slot_label_size,
+                                                              int active_slot,
+                                                              SDL_Window* window = nullptr);
+
     [[nodiscard]] std::vector<Widget> build_layout(const Config& config,
                                                    const Gui::GameFamily* family,
                                                    bool pad_active,
                                                    float w, float h) const;
+
+    [[nodiscard]] static u32 control_bit(ControlId id);
 
     [[nodiscard]] static bool hit_test(const Widget& w, float px, float py);
 

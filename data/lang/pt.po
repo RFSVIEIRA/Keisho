@@ -3920,6 +3920,76 @@ msgstr "Bezels partilhados"
 msgid "Fallback bezel images when no per-model bezels folder is set: <game>.png, the parent set's, or default.png."
 msgstr "Pasta alternativa de bezels quando nenhuma pasta por modelo está definida: <jogo>.png, do set pai, ou default.png."
 
+#: src/osd/gui.cpp
+#, no-c-format
+msgid "Buttons for"
+msgstr "Botões para"
+
+#: src/osd/gui.cpp
+#, no-c-format
+msgid "Every game uses the default on-screen controls until you hide or customize buttons for it here."
+msgstr "Cada jogo usa os controlos no ecrã predefinidos até ocultar ou personalizar botões para ele aqui."
+
+#: src/osd/gui.cpp
+#, no-c-format
+msgid "Toggle individual on-screen controls for this game. Menu and exit remain visible so you can always get back."
+msgstr "Mostre ou oculte individualmente os controlos táteis para este jogo. O menu e sair ficam sempre visíveis para poder regressar."
+
+#: src/osd/gui.cpp
+#, no-c-format
+msgid "Show all"
+msgstr "Mostrar todos"
+
+#: src/osd/gui.cpp
+#, no-c-format
+msgid "Applies to games using the default layout."
+msgstr "Aplica-se aos jogos que usam a disposição predefinida."
+
+#: src/osd/gui.cpp
+#, no-c-format
+msgid "Uses the default visibility until a control is hidden."
+msgstr "Usa a visibilidade predefinida até ocultar um controlo."
+
+#: src/osd/gui.cpp
+#, no-c-format
+msgid "Custom visibility saved for this game."
+msgstr "Visibilidade personalizada guardada para este jogo."
+
+#: src/osd/gui.cpp
+#, no-c-format
+msgid "Visible buttons"
+msgstr "Botões visíveis"
+
+#: src/osd/touch_gamepad.cpp
+#, no-c-format
+msgid "Left stick"
+msgstr "Analógico esquerdo"
+
+#: src/osd/touch_gamepad.cpp
+#, no-c-format
+msgid "Right stick"
+msgstr "Analógico direito"
+
+#: src/osd/touch_gamepad.cpp
+#, no-c-format
+msgid "SAVE / SLOT / LOAD"
+msgstr "GRAVAR / SLOT / ABRIR"
+
+#: src/osd/touch_gamepad.cpp
+#, no-c-format
+msgid "SERVICE / TEST"
+msgstr "SERVICE / TEST"
+
+#: src/osd/touch_gamepad.cpp
+#, no-c-format
+msgid "FPS"
+msgstr "FPS"
+
+#: src/osd/touch_gamepad.cpp
+#, no-c-format
+msgid "START"
+msgstr "START"
+
 #, no-c-format
 #~ msgid "Show bindings"
 #~ msgstr "Mostrar atribuições"

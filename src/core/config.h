@@ -347,6 +347,25 @@ struct Config {
     enum class TouchGunAim : u32 { Direct, Stick };
     TouchGunAim touch_gun_aim = TouchGunAim::Direct;
 
+    /// Bit flags identifying on-screen virtual gamepad widgets that can be
+    /// hidden globally or per game via PadLayout::touch_hidden (`touch_hidden` in ini).
+    static constexpr u32 kTouchHideStick       = 1u << 0;
+    static constexpr u32 kTouchHideRightStick  = 1u << 1;
+    static constexpr u32 kTouchHideBtnA        = 1u << 2;
+    static constexpr u32 kTouchHideBtnB        = 1u << 3;
+    static constexpr u32 kTouchHideBtnX        = 1u << 4;
+    static constexpr u32 kTouchHideBtnY        = 1u << 5;
+    static constexpr u32 kTouchHideBtnLB       = 1u << 6;
+    static constexpr u32 kTouchHideBtnRB       = 1u << 7;
+    static constexpr u32 kTouchHideTriggerL    = 1u << 8;
+    static constexpr u32 kTouchHideTriggerR    = 1u << 9;
+    static constexpr u32 kTouchHideExtras      = 1u << 10;
+    static constexpr u32 kTouchHideCoin        = 1u << 11;
+    static constexpr u32 kTouchHideStart       = 1u << 12;
+    static constexpr u32 kTouchHideSaveBar     = 1u << 13;
+    static constexpr u32 kTouchHideServiceTest = 1u << 14;
+    static constexpr u32 kTouchHideFps         = 1u << 15;
+
     /// The keyboard shortcuts. Keep kCount last.
     enum class Hotkey : u32 {
         Exit, Quit, Overlay, Fullscreen, Screenshot, Pause, QuickSave, QuickLoad,
@@ -433,6 +452,9 @@ struct Config {
             { -1, -1, -1, -1, -1, -1 },
             { -1, -1, -1, -1, -1, -1 },
         }};
+
+        /// Bitmask of Config::kTouchHide* controls hidden on the virtual touch pad.
+        u32 touch_hidden = 0;
 
         bool operator==(const PadLayout&) const = default;
     };
