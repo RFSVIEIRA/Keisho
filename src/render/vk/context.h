@@ -73,6 +73,10 @@ public:
     /// Rebuild the swapchain against the window's current drawable size.
     [[nodiscard]] bool recreate_swapchain();
 
+    /// Recreate both the platform VkSurfaceKHR and its swapchain after
+    /// VK_ERROR_SURFACE_LOST_KHR (for example Android activity pause/resume).
+    [[nodiscard]] bool recreate_surface();
+
     /// Block until the device is idle. Renderers call this before destroying
     /// anything a submitted command buffer may still use.
     void wait_idle();
@@ -196,6 +200,7 @@ private:
     bool m_frame_active              = false;
     bool m_vsync                     = true;
     bool m_needs_recreation          = false;
+    bool m_surface_lost              = false;
     bool m_suboptimal_from_transform = false;
     bool m_portability               = false;
 

@@ -856,9 +856,31 @@ bool Context::create_present_semaphores()
 
 bool Context::create_swapchain(VkSwapchainKHR old_swapchain)
 {
+    const auto surface_call = [&](VkResult res, const char* what) -> bool {
+        if (res == VK_SUCCESS) {
+            return true;
+        }
+        if (res == VK_ERROR_SURFACE_LOST_KHR) {
+            SM2_WARN("swapchain: %s lost the surface (%s); will recreate",
+                     what, result_string(res));
+            m_surface_lost = true;
+            return false;
+        }
+        SM2_ERROR("%s failed: %s", what, result_string(res));
+        return false;
+    };
+
+    if (m_surface == VK_NULL_HANDLE) {
+        m_surface_lost = true;
+        return false;
+    }
+
     VkSurfaceCapabilitiesKHR capabilities{};
-    SM2_VK_TRY(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_physical_device, m_surface,
-                                                         &capabilities));
+    if (!surface_call(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_physical_device, m_surface,
+                                                                &capabilities),
+                      "vkGetPhysicalDeviceSurfaceCapabilitiesKHR")) {
+        return false;
+    }
 
     // -- extent ----------------------------------------------------------
     VkExtent2D extent = capabilities.currentExtent;
@@ -880,11 +902,17 @@ bool Context::create_swapchain(VkSwapchainKHR old_swapchain)
 
     // -- format ----------------------------------------------------------
     u32 format_count = 0;
-    SM2_VK_TRY(vkGetPhysicalDeviceSurfaceFormatsKHR(m_physical_device, m_surface,
-                                                    &format_count, nullptr));
+    if (!surface_call(vkGetPhysicalDeviceSurfaceFormatsKHR(m_physical_device, m_surface,
+                                                           &format_count, nullptr),
+                      "vkGetPhysicalDeviceSurfaceFormatsKHR")) {
+        return false;
+    }
     std::vector<VkSurfaceFormatKHR> formats(format_count);
-    SM2_VK_TRY(vkGetPhysicalDeviceSurfaceFormatsKHR(m_physical_device, m_surface,
-                                                    &format_count, formats.data()));
+    if (!surface_call(vkGetPhysicalDeviceSurfaceFormatsKHR(m_physical_device, m_surface,
+                                                           &format_count, formats.data()),
+                      "vkGetPhysicalDeviceSurfaceFormatsKHR")) {
+        return false;
+    }
     if (formats.empty()) {
         SM2_ERROR("the surface reports no supported formats");
         return false;
@@ -904,11 +932,17 @@ bool Context::create_swapchain(VkSwapchainKHR old_swapchain)
 
     // -- present mode ----------------------------------------------------
     u32 mode_count = 0;
-    SM2_VK_TRY(vkGetPhysicalDeviceSurfacePresentModesKHR(m_physical_device, m_surface,
-                                                         &mode_count, nullptr));
+    if (!surface_call(vkGetPhysicalDeviceSurfacePresentModesKHR(m_physical_device, m_surface,
+                                                                &mode_count, nullptr),
+                      "vkGetPhysicalDeviceSurfacePresentModesKHR")) {
+        return false;
+    }
     std::vector<VkPresentModeKHR> modes(mode_count);
-    SM2_VK_TRY(vkGetPhysicalDeviceSurfacePresentModesKHR(m_physical_device, m_surface,
-                                                         &mode_count, modes.data()));
+    if (!surface_call(vkGetPhysicalDeviceSurfacePresentModesKHR(m_physical_device, m_surface,
+                                                                &mode_count, modes.data()),
+                      "vkGetPhysicalDeviceSurfacePresentModesKHR")) {
+        return false;
+    }
 
     const auto supports = [&modes](VkPresentModeKHR mode) {
         return std::find(modes.begin(), modes.end(), mode) != modes.end();
@@ -978,7 +1012,10 @@ bool Context::create_swapchain(VkSwapchainKHR old_swapchain)
     }
 
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
-    SM2_VK_TRY(vkCreateSwapchainKHR(m_device, &create_info, nullptr, &swapchain));
+    if (!surface_call(vkCreateSwapchainKHR(m_device, &create_info, nullptr, &swapchain),
+                      "vkCreateSwapchainKHR")) {
+        return false;
+    }
 
     // Only tear the old one down once the new one exists, so a failure above
     // leaves us still able to present.
@@ -1026,7 +1063,8 @@ bool Context::create_swapchain(VkSwapchainKHR old_swapchain)
              static_cast<u32>(capabilities.currentTransform));
 
     m_suboptimal_from_transform = (pre_transform != capabilities.currentTransform);
-    m_needs_recreation = false;
+    m_needs_recreation          = false;
+    m_surface_lost              = false;
     return true;
 }
 
@@ -1048,10 +1086,66 @@ void Context::wait_idle()
     }
 }
 
+bool Context::recreate_surface()
+{
+    if (m_window == nullptr || m_instance == VK_NULL_HANDLE || m_device == VK_NULL_HANDLE) {
+        return false;
+    }
+
+    m_surface_lost = true;
+    SM2_VK_WARN_ON_FAIL(vkDeviceWaitIdle(m_device));
+
+    // Destroy the swapchain before destroying its surface (required by Vulkan).
+    destroy_swapchain_views();
+    if (m_swapchain != VK_NULL_HANDLE) {
+        vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
+        m_swapchain = VK_NULL_HANDLE;
+    }
+    if (m_surface != VK_NULL_HANDLE) {
+        vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
+        m_surface = VK_NULL_HANDLE;
+    }
+
+    if (!SDL_Vulkan_CreateSurface(m_window->handle(), m_instance, nullptr, &m_surface)) {
+        SM2_WARN("SDL_Vulkan_CreateSurface deferred after surface loss: %s", SDL_GetError());
+        return false;
+    }
+
+    VkBool32 present_supported = VK_FALSE;
+    if (vkGetPhysicalDeviceSurfaceSupportKHR(m_physical_device, m_present_family, m_surface,
+                                             &present_supported) != VK_SUCCESS
+        || present_supported != VK_TRUE) {
+        SM2_ERROR("recreated Vulkan surface is not supported by present queue");
+        vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
+        m_surface = VK_NULL_HANDLE;
+        return false;
+    }
+
+    u32 width = 0;
+    u32 height = 0;
+    m_window->settle_drawable_size(&width, &height);
+    m_surface_lost = false;
+    if (width == 0 || height == 0) {
+        m_needs_recreation = true;
+        return false;
+    }
+
+    if (!create_swapchain(VK_NULL_HANDLE)) {
+        m_needs_recreation = true;
+        return false;
+    }
+    SM2_INFO("recreated Vulkan surface and swapchain (%ux%u)",
+             m_swapchain_extent.width, m_swapchain_extent.height);
+    return true;
+}
+
 bool Context::recreate_swapchain()
 {
     if (m_window == nullptr) {
         return false;
+    }
+    if (m_surface_lost || m_surface == VK_NULL_HANDLE) {
+        return recreate_surface();
     }
 
     u32 width = 0;
@@ -1081,48 +1175,69 @@ bool Context::begin_frame()
         SM2_ERROR("begin_frame called while a frame was already recording");
         return false;
     }
-    if (m_window == nullptr || m_window->minimised()) {
-        return false;
-    }
 
-    // Detect a drawable-size change directly: MoltenVK does not reliably report
-    // OUT_OF_DATE / SUBOPTIMAL on resize (e.g. a macOS fullscreen toggle).
-    {
-        u32 dw = 0;
-        u32 dh = 0;
-        m_window->drawable_size(&dw, &dh);
-        if (dw != 0 && dh != 0
-            && (dw != m_swapchain_extent.width || dh != m_swapchain_extent.height)) {
-            m_needs_recreation = true;
+    u32  image_index = 0;
+    bool acquired    = false;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        if (m_window == nullptr || m_window->minimised()) {
+            return false;
         }
-    }
+        if ((m_surface_lost || m_surface == VK_NULL_HANDLE) && !recreate_surface()) {
+            return false;
+        }
 
-    if (m_needs_recreation && !recreate_swapchain()) {
-        return false;
-    }
+        // Detect a drawable-size change directly: MoltenVK does not reliably report
+        // OUT_OF_DATE / SUBOPTIMAL on resize (e.g. a macOS fullscreen toggle).
+        {
+            u32 dw = 0;
+            u32 dh = 0;
+            m_window->drawable_size(&dw, &dh);
+            if (dw != 0 && dh != 0
+                && (dw != m_swapchain_extent.width || dh != m_swapchain_extent.height)) {
+                m_needs_recreation = true;
+            }
+        }
 
-    // Wait for the frame that last used this slot, so its command buffer and
-    // per-frame resources are free to overwrite.
-    SM2_VK_TRY(note(vkWaitForFences(m_device, 1, &m_in_flight[m_frame_index], VK_TRUE, UINT64_MAX)));
+        if ((m_needs_recreation || m_swapchain == VK_NULL_HANDLE) && !recreate_swapchain()) {
+            return false;
+        }
 
-    u32            image_index = 0;
-    const VkResult acquire     = note(vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX,
+        // Wait for the frame that last used this slot, so its command buffer and
+        // per-frame resources are free to overwrite.
+        SM2_VK_TRY(note(vkWaitForFences(m_device, 1, &m_in_flight[m_frame_index], VK_TRUE, UINT64_MAX)));
+
+        const VkResult acquire = note(vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX,
                                                             m_image_available[m_frame_index],
                                                             VK_NULL_HANDLE, &image_index));
-    if (acquire == VK_ERROR_OUT_OF_DATE_KHR) {
-        // The semaphore was not signalled, so it is safe to reuse next frame.
-        return recreate_swapchain() ? begin_frame() : false;
+        if (acquire == VK_ERROR_SURFACE_LOST_KHR) {
+            if (!recreate_surface()) {
+                return false;
+            }
+            continue;
+        }
+        if (acquire == VK_ERROR_OUT_OF_DATE_KHR) {
+            // The semaphore was not signalled, so it is safe to reuse next frame.
+            if (!recreate_swapchain()) {
+                return false;
+            }
+            continue;
+        }
+        if (acquire != VK_SUCCESS && acquire != VK_SUBOPTIMAL_KHR) {
+            SM2_ERROR("vkAcquireNextImageKHR failed: %s", result_string(acquire));
+            return false;
+        }
+        if (acquire == VK_SUBOPTIMAL_KHR && !m_suboptimal_from_transform) {
+            // Present anyway this frame, then rebuild. Bailing out here would drop
+            // a frame for a condition that is merely inefficient. When preTransform
+            // intentionally stays IDENTITY on a rotated surface, SUBOPTIMAL fires
+            // every frame; genuine resizes still trip OUT_OF_DATE or drawable_size().
+            m_needs_recreation = true;
+        }
+        acquired = true;
+        break;
     }
-    if (acquire != VK_SUCCESS && acquire != VK_SUBOPTIMAL_KHR) {
-        SM2_ERROR("vkAcquireNextImageKHR failed: %s", result_string(acquire));
+    if (!acquired || m_surface_lost || m_swapchain == VK_NULL_HANDLE) {
         return false;
-    }
-    if (acquire == VK_SUBOPTIMAL_KHR && !m_suboptimal_from_transform) {
-        // Present anyway this frame, then rebuild. Bailing out here would drop
-        // a frame for a condition that is merely inefficient. When preTransform
-        // intentionally stays IDENTITY on a rotated surface, SUBOPTIMAL fires
-        // every frame; genuine resizes still trip OUT_OF_DATE or drawable_size().
-        m_needs_recreation = true;
     }
 
     m_image_index = image_index;
@@ -1210,6 +1325,10 @@ bool Context::end_frame()
     // fence belongs to this slot.
     m_frame_index = (m_frame_index + 1) % kFramesInFlight;
 
+    if (result == VK_ERROR_SURFACE_LOST_KHR) {
+        m_surface_lost = true;
+        return true;
+    }
     if (result == VK_ERROR_OUT_OF_DATE_KHR
         || (result == VK_SUBOPTIMAL_KHR && !m_suboptimal_from_transform)) {
         m_needs_recreation = true;
