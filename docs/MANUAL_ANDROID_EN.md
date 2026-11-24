@@ -237,17 +237,19 @@ When launched from an external frontend (ROM passed via Intent/arguments), exiti
 
 ### Copy-Paste Examples
 
-#### 1. RetroFeVLC Android (`launchers.android/Sega Model 3.conf`)
+#### 1. RetroFeVLC Android (`RetroFeVLC/launchers/Sega Model 2.conf` and `Sega Model 3.conf`)
 Automatic virtual gamepad (hides automatically when a controller is connected):
 ```ini
-executable = io.github.keisho_emu.sm2f/.Sm2fActivity
-arguments = -a android.intent.action.VIEW -e rom "%ITEM_FILEPATH%" -e virtual_gamepad auto
+# Android Standalone Launcher: Keisho (Sega Model 1 / 2 / 3)
+executable = /system/bin/am
+arguments = start -n io.github.keisho_emu.sm2f/.Sm2fActivity -e rom "%ITEM_FILEPATH%" -e virtual_gamepad auto --activity-clear-task --activity-exclude-from-recents
 ```
 
-Force virtual gamepad **off** (recommended for dedicated controller / handheld setups):
+Force virtual gamepad **off** with **Vulkan** (recommended for dedicated controller / handheld setups):
 ```ini
-executable = io.github.keisho_emu.sm2f/.Sm2fActivity
-arguments = -a android.intent.action.VIEW -e rom "%ITEM_FILEPATH%" -e virtual_gamepad off -e graphics_backend vulkan
+# Android Standalone Launcher: Keisho (Sega Model 1 / 2 / 3)
+executable = /system/bin/am
+arguments = start -n io.github.keisho_emu.sm2f/.Sm2fActivity -e rom "%ITEM_FILEPATH%" -e virtual_gamepad off -e graphics_backend vulkan --activity-clear-task --activity-exclude-from-recents
 ```
 
 #### 2. Daijishō (Custom Player / `am start`)
@@ -282,19 +284,20 @@ launch: am start
 
 #### 5. Quick ADB Test Commands
 Launch Sega Rally 2 with Vulkan and virtual gamepad disabled:
-```bash
-adb shell am start -n io.github.keisho_emu.sm2f/.Sm2fActivity ^
-  -e rom "/storage/emulated/0/RetroFeVLC/collections/Sega Model 3/roms/srally2.zip" ^
-  -e virtual_gamepad off ^
-  -e graphics_backend vulkan
+```sh
+adb shell am start -n io.github.keisho_emu.sm2f/.Sm2fActivity \
+  -e rom "/storage/emulated/0/RetroFeVLC/collections/Sega Model 3/roms/srally2.zip" \
+  -e virtual_gamepad off \
+  -e graphics_backend vulkan \
+  --activity-clear-task --activity-exclude-from-recents
 ```
 
 Launch Daytona USA with automatic virtual gamepad:
-```bash
-adb shell am start -n io.github.keisho_emu.sm2f/.Sm2fActivity ^
-  -a android.intent.action.VIEW ^
-  -d "file:///storage/emulated/0/RetroFeVLC/collections/Sega Model 2/roms/daytona.zip" ^
-  -e virtual_gamepad auto
+```sh
+adb shell am start -n io.github.keisho_emu.sm2f/.Sm2fActivity \
+  -e rom "/storage/emulated/0/RetroFeVLC/collections/Sega Model 2/roms/daytona.zip" \
+  -e virtual_gamepad auto \
+  --activity-clear-task --activity-exclude-from-recents
 ```
 
 ---

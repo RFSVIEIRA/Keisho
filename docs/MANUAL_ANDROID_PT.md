@@ -56,7 +56,7 @@ model3_bezel_dir = /storage/emulated/0/RetroFeVLC/collections/Sega Model 3/mediu
 - **Bezels (`bezel_dir`):** requer **Vídeo → Bezel** ativado. Procura pela seguinte ordem:
   1. `<nome_da_rom>.png` (ex.: `daytona.png`)
   2. `<set_pai>.png` (ex.: para `doaa.zip`, procura `doaa.png` e depois `doa.png`)
-  3. `default.png` (moldura padrão daquele sistema)
+  3. `default.png` (moldura predefinida daquele sistema)
 
 ### Requisitos especiais de Model 2 (`daytona`, `desert`, `vcop`)
 Certifique-se de que tem os conjuntos de firmware da placa de I/O na pasta de ROMs de **Model 2** (do set MAME):
@@ -123,7 +123,7 @@ vs299j
 ### Como funciona e dicas úteis
 1. **Para voltar a mostrar um jogo excluído por defeito:** remova a linha correspondente em `[Model X Excludes]` ou adicione `;` / `#` no início da linha.
 2. **Lista branca (`Includes`):** se colocar qualquer nome dentro de `[Model X Includes]`, o emulador passa a mostrar **apenas** os jogos dessa lista para esse modelo (sobrepondo os `Excludes`).
-3. **Compatibilidade com RetroFeVLC:** além do `filters.ini`, o Keisho também lê automaticamente `exclude.txt` e `include.txt` colocados dentro da pasta de ROMs ou na pasta pai da coleção (ex.: `Sega Model 3/exclude.txt`).
+3. **Compatibilidade com RetroFeVLC:** além do `filters.ini`, o Keisho também lê automaticamente `exclude.txt` e `include.txt` colocados dentro da pasta de ROMs ou na pasta principal da coleção (ex.: `Sega Model 3/exclude.txt`).
 
 ---
 
@@ -133,7 +133,7 @@ No menu **Definições → Vídeo**:
 
 | Opção | Descrição |
 |---|---|
-| **Renderer** (`graphics_backend`) | `vulkan` (padrão recomendado para GPUs modernas como Adreno/Mali), `opengl` (OpenGL ES 3.1) ou `software` (CPU). Ao alterar nas definições e fechar o menu, o motor gráfico reinicia automaticamente já no novo renderer. |
+| **Renderer** (`graphics_backend`) | `vulkan` (opção predefinida recomendada para GPUs modernas como Adreno/Mali), `opengl` (OpenGL ES 3.1) ou `software` (CPU). Ao alterar nas definições e fechar o menu, o motor gráfico reinicia automaticamente já no novo renderer. |
 | **Escala 3D** (`render_scale`) | `1x` (496×384 nativo) até `8x` (~4K). Aplicada nos renderers Vulkan e OpenGL ES. |
 | **Formato** (`aspect_mode`) | `4:3`, `square` (píxeis quadrados), `16:9` (widescreen 3D real em Vulkan/GL) ou `stretch`. |
 | **Bezel** (`bezel`) | Desenha a moldura do jogo usando a pasta de bezels do respetivo modelo. |
@@ -185,9 +185,9 @@ Em **Definições → Entrada → Comando → Comando no ecrã** (e também em *
 
 | Opção | Chave INI | Comportamento |
 |---|---|---|
-| **Mira tátil (pistola)** | `touch_gun_aim = direct` *(padrão)* | **Toque direto:** toque ou arraste em qualquer ponto do ecrã para apontar e disparar sem ter o analógico no meio. Os cantos inferiores mantêm `FIRE` e `RELOAD` (ou `MSL` em *Behind Enemy Lines*). |
+| **Mira tátil (pistola)** | `touch_gun_aim = direct` *(predefinido)* | **Toque direto:** toque ou arraste em qualquer ponto do ecrã para apontar e disparar sem ter o analógico no meio. Os cantos inferiores mantêm `FIRE` e `RELOAD` (ou `MSL` em *Behind Enemy Lines*). |
 | **Mira tátil (pistola)** | `touch_gun_aim = stick` | **Analógico fixo:** coloca um analógico virtual fixo no canto inferior esquerdo para mover a mira suavemente sem tapar o ecrã com os dedos, e `FIRE` + `RELOAD`/`MSL` à direita. |
-| **Sensibilidade do analógico (mira)** | `lightgun_stick_sensitivity` (`25`–`300`, padrão `100`) | Ajusta a velocidade de deslocação da mira em modo **Analógico fixo** (ou comando físico), e a resposta da curva quando **Mira centrada no analógico** (`lightgun_pad_centred`) está ativo. |
+| **Sensibilidade do analógico (mira)** | `lightgun_stick_sensitivity` (`25`–`300`, predefinição `100`) | Ajusta a velocidade de deslocação da mira em modo **Analógico fixo** (ou comando físico), e a resposta da curva quando **Mira centrada no analógico** (`lightgun_pad_centred`) está ativo. |
 | **Mira centrada no analógico** | `lightgun_pad_centred` | Desligado: o analógico move a mira como um rato. Ligado: a mira acompanha proporcionalmente a inclinação do analógico a partir do centro. |
 
 > **Notas específicas para *Behind Enemy Lines* (`bel.zip`):**
@@ -229,7 +229,7 @@ O `io.github.keisho_emu.sm2f/.Sm2fActivity` aceita:
 - **ROM por Intent Extra:** `rom`, `ROM`, `rom_path`, `file`, `filepath` (caminho completo do `.zip`/`.7z`)
 - **Nome de set por Extra:** `game` (ex.: `daytona`, `srally2`, usa a pasta do sistema no `keisho.ini`)
 - **ROM por URI Data:** `file:///...`, caminho direto sem esquema ou `content://...`
-- **Controlo virtual por Extra:** `virtual_gamepad`, `virtual-gamepad`, `touch_gamepad`, `touch_controls` ou `virtual_controller` (aceita string `auto` / `on` / `off` ou boolean `true` / `false`)
+- **Controlo virtual por Extra:** `virtual_gamepad`, `virtual-gamepad`, `touch_gamepad`, `touch_controls` ou `virtual_controller` (aceita texto `auto` / `on` / `off` ou booleano `true` / `false`)
 - **Backend gráfico por Extra:** `graphics_backend`, `graphics-backend`, `backend` ou `renderer` (`vulkan` / `opengl` / `software`)
 - **Argumentos extra livres:** `arguments`, `args` ou `cli_args` (ex.: `"--virtual-gamepad off --graphics-backend vulkan"`)
 
@@ -237,17 +237,19 @@ O `io.github.keisho_emu.sm2f/.Sm2fActivity` aceita:
 
 ### Exemplos Prontos a Copiar
 
-#### 1. RetroFeVLC Android (`launchers.android/Sega Model 3.conf`)
-Com comando virtual automático (desliga sozinho se houver gamepad):
+#### 1. RetroFeVLC Android (`RetroFeVLC/launchers/Sega Model 2.conf` e `Sega Model 3.conf`)
+Com comando virtual automático (oculta sozinho quando há um comando físico ligado):
 ```ini
-executable = io.github.keisho_emu.sm2f/.Sm2fActivity
-arguments = -a android.intent.action.VIEW -e rom "%ITEM_FILEPATH%" -e virtual_gamepad auto
+# Android Standalone Launcher: Keisho (Sega Model 1 / 2 / 3)
+executable = /system/bin/am
+arguments = start -n io.github.keisho_emu.sm2f/.Sm2fActivity -e rom "%ITEM_FILEPATH%" -e virtual_gamepad auto --activity-clear-task --activity-exclude-from-recents
 ```
 
-Forçar comando virtual **desligado** (ideal para telemóvel com gamepad Bluetooth fixo ou consola portátil):
+Forçar comando virtual **desligado** e renderer **Vulkan** (ideal para telemóvel com comando Bluetooth fixo ou consola portátil):
 ```ini
-executable = io.github.keisho_emu.sm2f/.Sm2fActivity
-arguments = -a android.intent.action.VIEW -e rom "%ITEM_FILEPATH%" -e virtual_gamepad off -e graphics_backend vulkan
+# Android Standalone Launcher: Keisho (Sega Model 1 / 2 / 3)
+executable = /system/bin/am
+arguments = start -n io.github.keisho_emu.sm2f/.Sm2fActivity -e rom "%ITEM_FILEPATH%" -e virtual_gamepad off -e graphics_backend vulkan --activity-clear-task --activity-exclude-from-recents
 ```
 
 #### 2. Daijishō (Custom Player / Am Start command)
@@ -283,19 +285,20 @@ launch: am start
 
 #### 5. Teste rápido por ADB (`am start`)
 Lançar Sega Rally 2 com Vulkan e sem comando virtual:
-```bash
-adb shell am start -n io.github.keisho_emu.sm2f/.Sm2fActivity ^
-  -e rom "/storage/emulated/0/RetroFeVLC/collections/Sega Model 3/roms/srally2.zip" ^
-  -e virtual_gamepad off ^
-  -e graphics_backend vulkan
+```sh
+adb shell am start -n io.github.keisho_emu.sm2f/.Sm2fActivity \
+  -e rom "/storage/emulated/0/RetroFeVLC/collections/Sega Model 3/roms/srally2.zip" \
+  -e virtual_gamepad off \
+  -e graphics_backend vulkan \
+  --activity-clear-task --activity-exclude-from-recents
 ```
 
 Lançar Daytona USA com comando tátil ativo no modo automático:
-```bash
-adb shell am start -n io.github.keisho_emu.sm2f/.Sm2fActivity ^
-  -a android.intent.action.VIEW ^
-  -d "file:///storage/emulated/0/RetroFeVLC/collections/Sega Model 2/roms/daytona.zip" ^
-  -e virtual_gamepad auto
+```sh
+adb shell am start -n io.github.keisho_emu.sm2f/.Sm2fActivity \
+  -e rom "/storage/emulated/0/RetroFeVLC/collections/Sega Model 2/roms/daytona.zip" \
+  -e virtual_gamepad auto \
+  --activity-clear-task --activity-exclude-from-recents
 ```
 
 ---

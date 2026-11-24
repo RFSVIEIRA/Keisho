@@ -114,7 +114,7 @@ choice there, and the only one that widens 2D backgrounds in 16:9.
 | **x86-64 Windows** | Built with MSVC, with the software, OpenGL and Vulkan renderers. Less tested than Linux. |
 | **macOS** | Apple Silicon (recommended) or a 2015+ Intel Mac. The release dmg includes MoltenVK and needs nothing else installed. |
 | **ARM (SBCs, handhelds)** | A **Raspberry Pi 5** or better. The Pi 5 runs most Model 1 and 2 games at full speed; the heaviest Model 2B/2C games run just below it. Model 3 games run below full speed on a Pi 5, mostly at 42-56 fps at 1080p. |
-| **Android (`arm64-v8a`)** | Android 7.0+ (API 24+, Vulkan 1.3 or OpenGL ES 3.1, or software renderer). Includes an adaptive on-screen touch gamepad (with direct-touch or fixed-stick light-gun aiming), physical BT/USB gamepad support, per-model folders/filters, and frontend intent/CLI launch ([EN](docs/MANUAL_ANDROID_EN.md) / [PT](docs/MANUAL_ANDROID_PT.md)). |
+| **Android (`arm64-v8a`)** | Android 7.0+ (API 24+, Vulkan 1.3 or OpenGL ES 3.1, or software renderer). Includes an adaptive on-screen touch gamepad (with direct-touch or fixed-stick light-gun aiming), physical BT/USB gamepad support, per-model folders/filters, and frontend intent/CLI launch ([EN](docs/MANUAL_ANDROID_EN.md) / [PT-PT](docs/MANUAL_ANDROID_PT.md)). |
 
 On a Raspberry Pi 5 with the software renderer, Virtua Fighter 2, Daytona USA,
 Sega Rally and Manx TT run comfortably above 57.5 Hz. House of the Dead,
@@ -207,7 +207,7 @@ zipalign -c -v -P 16 4 android/app/build/outputs/apk/release/app-release.apk
 adb install -r android/app/build/outputs/apk/release/app-release.apk
 ```
 
-See [docs/MANUAL_ANDROID_EN.md](docs/MANUAL_ANDROID_EN.md) (and [docs/MANUAL_ANDROID_PT.md](docs/MANUAL_ANDROID_PT.md)) for Android configuration, light-gun touch modes, `filters.ini` and frontend launch examples (RetroFeVLC, Daijishō, ES-DE, Pegasus).
+See [docs/MANUAL_ANDROID_EN.md](docs/MANUAL_ANDROID_EN.md) (and the Portuguese PT-PT guide: [docs/MANUAL_ANDROID_PT.md](docs/MANUAL_ANDROID_PT.md)) for Android configuration, light-gun touch modes, `filters.ini` and frontend launch examples (RetroFeVLC, Daijishō, ES-DE, Pegasus).
 
 ## Running
 
@@ -375,7 +375,7 @@ both. Menu changes are saved on exit, and command-line options always win.
 ### Language
 
 The menu follows the system language, or the one set under **Video → Language**
-or `language` in the ini (`en`, `de`, `ja`, `pt_BR`, ...). It switches live and
+or `language` in the ini (`en`, `de`, `ja`, `pt`, `pt_BR`, ...). It switches live and
 uses the system's fonts for scripts the built-in font doesn't cover, and the
 Noto fonts in `data/lang/fonts/` for Thai, Hindi, Bengali, Tamil and Urdu
 where the system has none (as on Batocera).
