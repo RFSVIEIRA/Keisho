@@ -1,4 +1,4 @@
-package io.github.keisho_emu.sm2f;
+package io.github.keisho_emu.keisho;
 
 import android.Manifest;
 import android.content.Intent;
@@ -21,11 +21,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Main SDL3 Activity for SM2F (Keisho Sega Model 2 Android port).
+ * Main SDL3 Activity for Keisho (Sega Model 1, 2 & 3 Android port).
  * Supports direct frontend launch as well as Intent-based launching from
  * external Android frontends, plus storage permission helpers.
  */
-public class Sm2fActivity extends SDLActivity {
+public class KeishoActivity extends SDLActivity {
     private static final int REQ_LEGACY_STORAGE = 1001;
 
     @Override

@@ -1,4 +1,4 @@
-# Manual de Configuração Android — Keisho (SM2F)
+# Manual de Configuração Android — Keisho
 
 Emulador Sega Model 1, Model 2 e Model 3 para Android (`arm64-v8a`), com suporte a arranque direto pela interface do emulador ou integração com frontends (RetroFeVLC, Daijishō, ES-DE, Pegasus, LaunchBox).
 
@@ -12,7 +12,7 @@ Para ler pastas em `/storage/emulated/0/...` (ROMs, capas, bezels, `exclude.txt`
 ### Ficheiros de Configuração da Aplicação
 Localizados por defeito em:
 ```text
-/storage/emulated/0/Android/data/io.github.keisho_emu.sm2f/files/
+/storage/emulated/0/Android/data/io.github.keisho_emu.keisho/files/
 ```
 Principais ficheiros e subpastas gerados automaticamente:
 
@@ -69,7 +69,7 @@ Certifique-se de que tem os conjuntos de firmware da placa de I/O na pasta de RO
 
 Na primeira execução, o Keisho cria automaticamente o ficheiro:
 ```text
-/storage/emulated/0/Android/data/io.github.keisho_emu.sm2f/files/filters.ini
+/storage/emulated/0/Android/data/io.github.keisho_emu.keisho/files/filters.ini
 ```
 Este ficheiro já vem **pré-preenchido** por defeito (ocultando clones regionais redundantes, firmware I/O e protótipos não jogáveis), mas pode abri-lo em qualquer editor de texto e alterá-lo livremente.
 
@@ -223,9 +223,9 @@ Quando lançado por um frontend externo (com ROM passada via argumento/Intent), 
 
 ---
 
-### B. Android Intents / Extras Suportados (`Sm2fActivity`)
+### B. Android Intents / Extras Suportados (`KeishoActivity`)
 
-O `io.github.keisho_emu.sm2f/.Sm2fActivity` aceita:
+O `io.github.keisho_emu.keisho/.KeishoActivity` aceita:
 - **ROM por Intent Extra:** `rom`, `ROM`, `rom_path`, `file`, `filepath` (caminho completo do `.zip`/`.7z`)
 - **Nome de set por Extra:** `game` (ex.: `daytona`, `srally2`, usa a pasta do sistema no `keisho.ini`)
 - **ROM por URI Data:** `file:///...`, caminho direto sem esquema ou `content://...`
@@ -242,20 +242,20 @@ Com comando virtual automático (oculta sozinho quando há um comando físico li
 ```ini
 # Android Standalone Launcher: Keisho (Sega Model 1 / 2 / 3)
 executable = /system/bin/am
-arguments = start -n io.github.keisho_emu.sm2f/.Sm2fActivity -e rom "%ITEM_FILEPATH%" -e virtual_gamepad auto --activity-clear-task --activity-exclude-from-recents
+arguments = start -n io.github.keisho_emu.keisho/.KeishoActivity -e rom "%ITEM_FILEPATH%" -e virtual_gamepad auto --activity-clear-task --activity-exclude-from-recents
 ```
 
 Forçar comando virtual **desligado** e renderer **Vulkan** (ideal para telemóvel com comando Bluetooth fixo ou consola portátil):
 ```ini
 # Android Standalone Launcher: Keisho (Sega Model 1 / 2 / 3)
 executable = /system/bin/am
-arguments = start -n io.github.keisho_emu.sm2f/.Sm2fActivity -e rom "%ITEM_FILEPATH%" -e virtual_gamepad off -e graphics_backend vulkan --activity-clear-task --activity-exclude-from-recents
+arguments = start -n io.github.keisho_emu.keisho/.KeishoActivity -e rom "%ITEM_FILEPATH%" -e virtual_gamepad off -e graphics_backend vulkan --activity-clear-task --activity-exclude-from-recents
 ```
 
 #### 2. Daijishō (Custom Player / Am Start command)
 Com `virtual_gamepad` desligado quando há comando configurado:
 ```text
-am start -n io.github.keisho_emu.sm2f/.Sm2fActivity
+am start -n io.github.keisho_emu.keisho/.KeishoActivity
   -a android.intent.action.VIEW
   -e rom "{file.path}"
   -e virtual_gamepad off
@@ -269,7 +269,7 @@ collection: Sega Model 3
 shortname: model3
 extensions: zip, 7z
 launch: am start
-  -n io.github.keisho_emu.sm2f/.Sm2fActivity
+  -n io.github.keisho_emu.keisho/.KeishoActivity
   -a android.intent.action.VIEW
   -d "{file.uri}"
   --es virtual_gamepad auto
@@ -279,14 +279,14 @@ launch: am start
 #### 4. ES-DE (`es_systems.xml` no Android)
 ```xml
 <command label="Keisho (Vulkan / Sem comando tátil)">
-  am start -n io.github.keisho_emu.sm2f/.Sm2fActivity -a android.intent.action.VIEW -e rom "%ROM%" -e virtual_gamepad off -e graphics_backend vulkan
+  am start -n io.github.keisho_emu.keisho/.KeishoActivity -a android.intent.action.VIEW -e rom "%ROM%" -e virtual_gamepad off -e graphics_backend vulkan
 </command>
 ```
 
 #### 5. Teste rápido por ADB (`am start`)
 Lançar Sega Rally 2 com Vulkan e sem comando virtual:
 ```sh
-adb shell am start -n io.github.keisho_emu.sm2f/.Sm2fActivity \
+adb shell am start -n io.github.keisho_emu.keisho/.KeishoActivity \
   -e rom "/storage/emulated/0/RetroFeVLC/collections/Sega Model 3/roms/srally2.zip" \
   -e virtual_gamepad off \
   -e graphics_backend vulkan \
@@ -295,7 +295,7 @@ adb shell am start -n io.github.keisho_emu.sm2f/.Sm2fActivity \
 
 Lançar Daytona USA com comando tátil ativo no modo automático:
 ```sh
-adb shell am start -n io.github.keisho_emu.sm2f/.Sm2fActivity \
+adb shell am start -n io.github.keisho_emu.keisho/.KeishoActivity \
   -e rom "/storage/emulated/0/RetroFeVLC/collections/Sega Model 2/roms/daytona.zip" \
   -e virtual_gamepad auto \
   --activity-clear-task --activity-exclude-from-recents

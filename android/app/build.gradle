@@ -14,12 +14,12 @@ tasks.register('syncKeishoAssets', Sync) {
 }
 
 android {
-    namespace = "io.github.keisho_emu.sm2f"
+    namespace = "io.github.keisho_emu.keisho"
     compileSdk = 35
     ndkVersion = "25.1.8937393"
 
     defaultConfig {
-        applicationId "io.github.keisho_emu.sm2f"
+        applicationId "io.github.keisho_emu.keisho"
         minSdk = 24
         targetSdk = 35
         versionCode 2

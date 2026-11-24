@@ -34,7 +34,7 @@
         android:hardwareAccelerated="true">
 
         <activity
-            android:name="io.github.keisho_emu.sm2f.Sm2fActivity"
+            android:name="io.github.keisho_emu.keisho.KeishoActivity"
             android:label="@string/app_name"
             android:screenOrientation="sensorLandscape"
             android:alwaysRetainTaskState="true"

@@ -1,4 +1,4 @@
-// Top-level build file for SM2F (Keisho Sega Model 2 Android port).
+// Top-level build file for Keisho (Sega Model 1, 2 & 3 Android port).
 
 buildscript {
     repositories {

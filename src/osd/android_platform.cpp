@@ -28,7 +28,7 @@ namespace {
 #define SM2_VERSION "0.9.63"
 #endif
 
-constexpr const char* kAssetsStamp = SM2_VERSION "-sm2f-9";
+constexpr const char* kAssetsStamp = SM2_VERSION "-keisho-1";
 
 std::string g_assets_dir;
 

@@ -7,7 +7,7 @@
 //            継 承  ( k e i s h ō )
 //
 // Android platform helpers: APK asset extraction, storage roots, and
-// storage-permission bridges to Sm2fActivity.
+// storage-permission bridges to KeishoActivity.
 #pragma once
 
 #include <string>
