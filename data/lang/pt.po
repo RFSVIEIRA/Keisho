@@ -3927,6 +3927,36 @@ msgstr "Botões para"
 
 #: src/osd/gui.cpp
 #, no-c-format
+msgid "Invert stick"
+msgstr "Inverter stick"
+
+#: src/osd/gui.cpp
+#, no-c-format
+msgid "Flip horizontal (X), vertical (Y), or both directions."
+msgstr "Inverter horizontal (X), vertical (Y) ou ambos os sentidos."
+
+#: src/osd/gui.cpp
+#, no-c-format
+msgid "Invert left/right (Horizontal), up/down (Vertical), or both stick axes for this game. Applies to both the on-screen stick and physical gamepads."
+msgstr "Inverte esquerda/direita (Horizontal), cima/baixo (Vertical) ou ambos os eixos do stick neste jogo. Aplica-se ao stick tátil e a comandos físicos."
+
+#: src/osd/gui.cpp
+#, no-c-format
+msgid "Horizontal"
+msgstr "Horizontal"
+
+#: src/osd/gui.cpp
+#, no-c-format
+msgid "Vertical"
+msgstr "Vertical"
+
+#: src/osd/gui.cpp
+#, no-c-format
+msgid "Both"
+msgstr "Ambos"
+
+#: src/osd/gui.cpp
+#, no-c-format
 msgid "Every game uses the default on-screen controls until you hide or customize buttons for it here."
 msgstr "Cada jogo usa os controlos no ecrã predefinidos até ocultar ou personalizar botões para ele aqui."
 

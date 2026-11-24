@@ -3070,6 +3070,25 @@ void Gui::page_gamepad(ui::Kit& kit, Config& config, Input* input)
         kit.tip(tr("Every game uses the default on-screen controls until you hide or customize buttons for it here."));
         draw_family_dropdown(tr("Buttons for"));
 
+        {
+            static constexpr std::array<const char*, 4> kInvertModes = {
+                N_("Off"), N_("Horizontal"), N_("Vertical"), N_("Both")
+            };
+            const auto edit_p = static_cast<usize>(std::clamp(m_pad_edit_player, 0, 1));
+            const auto aim_x  = static_cast<usize>(Config::PadAxisRole::AimX);
+            const auto aim_y  = static_cast<usize>(Config::PadAxisRole::AimY);
+            int invert_mode   = (binds->axis_invert[edit_p][aim_x] ? 1 : 0)
+                              | (binds->axis_invert[edit_p][aim_y] ? 2 : 0);
+            kit.tip(tr("Invert left/right (Horizontal), up/down (Vertical), or both stick axes for this game. "
+                       "Applies to both the on-screen stick and physical gamepads."));
+            if (kit.choice(tr("Invert stick"),
+                           tr("Flip horizontal (X), vertical (Y), or both directions."),
+                           tr_all(kInvertModes), invert_mode)) {
+                binds->axis_invert[edit_p][aim_x] = (invert_mode & 1) != 0;
+                binds->axis_invert[edit_p][aim_y] = (invert_mode & 2) != 0;
+            }
+        }
+
         kit.tip(tr("Toggle individual on-screen controls for this game. Menu and exit remain visible so you can "
                    "always get back."));
         const std::array<const char*, 1> touch_actions = {tr("Show all")};

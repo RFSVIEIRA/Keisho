@@ -1036,11 +1036,17 @@ void TouchGamepad::update_and_draw(const Config& config, Input* input,
                 }
 
                 if (also_dpad) {
+                    float dx = nx;
+                    float dy = ny;
+                    if (cid == ControlId::LeftStick) {
+                        if (layout.axis_invert[0][static_cast<u32>(Config::PadAxisRole::AimX)]) dx = -dx;
+                        if (layout.axis_invert[0][static_cast<u32>(Config::PadAxisRole::AimY)]) dy = -dy;
+                    }
                     constexpr float kDpadThresh = 0.35f;
-                    if (nx < -kDpadThresh) input->set_virtual_button(SDL_GAMEPAD_BUTTON_DPAD_LEFT, true);
-                    if (nx >  kDpadThresh) input->set_virtual_button(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, true);
-                    if (ny < -kDpadThresh) input->set_virtual_button(SDL_GAMEPAD_BUTTON_DPAD_UP, true);
-                    if (ny >  kDpadThresh) input->set_virtual_button(SDL_GAMEPAD_BUTTON_DPAD_DOWN, true);
+                    if (dx < -kDpadThresh) input->set_virtual_button(SDL_GAMEPAD_BUTTON_DPAD_LEFT, true);
+                    if (dx >  kDpadThresh) input->set_virtual_button(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, true);
+                    if (dy < -kDpadThresh) input->set_virtual_button(SDL_GAMEPAD_BUTTON_DPAD_UP, true);
+                    if (dy >  kDpadThresh) input->set_virtual_button(SDL_GAMEPAD_BUTTON_DPAD_DOWN, true);
                 }
                 break;
             }

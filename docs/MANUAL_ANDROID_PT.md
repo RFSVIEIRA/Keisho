@@ -178,12 +178,13 @@ Em **Definições → Entrada → Comando → Comando virtual** (ou no `keisho.i
   - *Motor Raid*: `GAS`, `BRAKE` + **`MURRO`** e **`PONTAPÉ`** *(sem seletor de mudanças fictício)*
   - *Jogos de Luta / Ação / Desporto / Pistola / Voos / Esqui*: etiquetas e disposições adaptadas à respetiva cabina — só os botões reais do jogo aparecem (*Virtual On*, *Virtua Fighter*, *SpikeOut*, *Virtua Striker*, *Hattrick Hero / Harikiri Pro Yakyuu*, *Desert Tank*, *Star Wars Trilogy*, *Wing War*, *Sega Bass Fishing*, *Top Skater*, *Ski Champ*, *Sega Water Ski*, *Virtua Cop*, *House of the Dead*, *Behind Enemy Lines*, etc.).
 
-### Personalizar os botões visíveis no ecrã por jogo (`touch_hidden`)
+### Personalizar os botões visíveis no ecrã por jogo (`touch_hidden`) e inverter eixos do stick
 Em **Definições → Entrada → Comando → Comando no ecrã**:
-- Escolha o jogo em **Botões para** (*Predefinição* para todos os jogos, ou um título específico como `Daytona USA`, `Virtua Striker`, `Motor Raid`, etc.).
+- Escolha o jogo em **Botões para** (*Predefinição* para todos os jogos, ou um título específico como `Daytona USA`, `Virtua Striker`, `Motor Raid`, `Star Wars Trilogy`, etc.).
+- Use **Inverter stick** (`Desligado` / `Horizontal` / `Vertical` / `Ambos`) para inverter apenas o eixo esquerda/direita, apenas cima/baixo (ex.: manípulo de voo em *Star Wars*) ou ambos, tanto no stick virtual como em comandos físicos (`pad1_axis_aim_x_invert` / `pad1_axis_aim_y_invert` na secção `[<jogo>]`).
 - Ative ou desative individualmente cada botão/analógico tátil ou barra (`COIN`, `START`, `GRAVAR / SLOT / ABRIR`, `SERVICE / TEST`, `FPS`).
 - Use **Mostrar todos** para voltar a mostrar tudo rapidamente nesse perfil (`SETTINGS/MENU` e `EXIT/SAIR` ficam sempre visíveis para nunca perder o acesso ao menu).
-- As preferências por jogo ficam guardadas automaticamente no `keisho.ini` na secção `[<jogo>]` através da chave `touch_hidden`.
+- As preferências por jogo ficam guardadas automaticamente no `keisho.ini` na secção `[<jogo>]`.
 
 ### Jogos de Tiro / Pistola de Luz (`Virtua Cop 1/2`, `House of the Dead`, `Behind Enemy Lines`, `Gunblade NY`, `Rail Chase 2`, `The Lost World`, `LA Machineguns`, `Ocean Hunter`)
 As definições de mira aplicam-se automaticamente a **todos** os títulos de pistola/tiro (Model 2 e Model 3), a partir dos metadados de `data/games.xml`.
